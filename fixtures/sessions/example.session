@@ -1,0 +1,8 @@
+(:version "0.1"
+ :session-id "example-session"
+ :created-at "fixture"
+ :updated-at "fixture"
+ :history-index nil
+ :context-summary nil
+ :permission-snapshot nil
+ :status :active)
