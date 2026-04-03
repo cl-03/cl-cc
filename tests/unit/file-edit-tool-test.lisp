@@ -46,6 +46,8 @@
                   (format nil "@@ match 7..13 @@~%-~A~%+~A"
                     "before target after"
                     "before updated after")))
+             (is (string= (getf result :line-diff-preview)
+                          (format nil "@@ lines 1..1 -> 1..1 @@~%before:~%- 1| before target after~%after:~%+ 1| before updated after")))
              (is (getf result :write-applied)))
            (is (string= (uiop:read-file-string path) "before updated after"))
            (handler-case
@@ -87,7 +89,9 @@
              (is (string= (getf result :diff-preview)
                   (format nil "@@ match 7..14 @@~%-~A~%+~A"
                     "before preview after"
-                    "before done after"))))
+                    "before done after")))
+             (is (string= (getf result :line-diff-preview)
+                          (format nil "@@ lines 1..1 -> 1..1 @@~%before:~%- 1| before preview after~%after:~%+ 1| before done after"))))
            (is (string= (uiop:read-file-string path) "before preview after")))
       (when (probe-file path)
         (delete-file path)))))
@@ -133,7 +137,9 @@
              (is (string= (getf result :diff-preview)
                   (format nil "@@ match 8..11 @@~%-~A~%+~A"
                     "dup gap dup tail"
-                    "dup gap done tail"))))
+                    "dup gap done tail")))
+             (is (string= (getf result :line-diff-preview)
+                          (format nil "@@ lines 1..1 -> 1..1 @@~%before:~%- 1| dup gap dup tail~%after:~%+ 1| dup gap done tail"))))
            (is (string= (uiop:read-file-string path) "dup gap done tail"))
            (handler-case
                (progn
@@ -157,6 +163,25 @@
              (is (= (getf result :match-start-line) 2))
              (is (= (getf result :match-start-column) 6))
              (is (= (getf result :match-end-line) 2))
-             (is (= (getf result :match-end-column) 12))))
+             (is (= (getf result :match-end-column) 12))
+             (is (string= (getf result :line-diff-preview)
+                          (format nil "@@ lines 2..2 -> 2..2 @@~%before:~%  1| alpha~%- 2| beta target~%  3| gamma~%after:~%  1| alpha~%+ 2| beta done~%  3| gamma")))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test file-edit-tool-renders-line-diff-preview-for-multiline-replacement
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "file-edit-tool-line-diff.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "alpha~%beta target~%gamma") stream))
+           (let ((result (cl-cc.tools:file-edit-tool (list :path path
+                                                           :old-text "beta target"
+                                                           :new-text (format nil "beta~%done")
+                                                           :preview t))))
+             (is (string= (getf result :line-diff-preview)
+                          (format nil "@@ lines 2..2 -> 2..3 @@~%before:~%  1| alpha~%- 2| beta target~%  3| gamma~%after:~%  1| alpha~%+ 2| beta~%+ 3| done~%  4| gamma")))))
       (when (probe-file path)
         (delete-file path)))))

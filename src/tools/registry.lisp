@@ -172,6 +172,7 @@
            ,(schema-field "beforePreview" "替换前的局部预览片段" :source '(:raw-result-field :before-preview) :type :string)
            ,(schema-field "afterPreview" "替换后的局部预览片段" :source '(:raw-result-field :after-preview) :type :string)
            ,(schema-field "diffPreview" "替换前后合并展示的稳定 diff 预览片段" :source '(:raw-result-field :diff-preview) :type :string)
+             ,(schema-field "lineDiffPreview" "替换前后按行展示并带上下文的稳定 diff 预览片段" :source '(:raw-result-field :line-diff-preview) :type :string)
                    ,(schema-field "writeApplied" "是否已实际写回文件；preview 模式下为 null" :source '(:raw-result-field :write-applied) :type :boolean :required nil :nullable t))))
     (:error-output-schema `(:text "file edit failed output"
              :closed t

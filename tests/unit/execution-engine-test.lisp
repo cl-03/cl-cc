@@ -87,6 +87,11 @@
                                                  :diff-preview "@@ match 7..14 @@
 -before preview after
 +before value after"
+                                                 :line-diff-preview "@@ lines 1..1 -> 1..1 @@
+before:
+- 1| before preview after
+after:
++ 1| before value after"
                                                  :write-applied nil))
              '(:RESULT "预览编辑文件: tmp.txt"
                :PATH "tmp.txt"
@@ -107,6 +112,11 @@
                :DIFF-PREVIEW "@@ match 7..14 @@
 -before preview after
 +before value after"
+               :LINE-DIFF-PREVIEW "@@ lines 1..1 -> 1..1 @@
+before:
+- 1| before preview after
+after:
++ 1| before value after"
                :WRITE-APPLIED NIL))))
 
 (test tool-error-output-materializes-declared-error-schema

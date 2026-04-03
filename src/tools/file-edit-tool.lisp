@@ -21,6 +21,9 @@
 (defparameter +file-edit-preview-radius+ 20
   "生成替换前后预览片段时保留的上下文字符数。")
 
+(defparameter +file-edit-preview-line-radius+ 1
+  "生成行级 diff 预览时保留的上下文行数。")
+
 (defun %valid-file-edit-occurrence-p (occurrence)
   (or (null occurrence)
       (and (integerp occurrence)
@@ -188,6 +191,69 @@
             :match-end-line end-line
             :match-end-column end-column))))
 
+(defun %file-edit-lines (contents)
+  (loop with lines = '()
+        with current = (make-string-output-stream)
+        with index = 0
+        while (< index (length contents)) do
+          (let ((character (char contents index)))
+            (cond
+              ((char= character #\Return)
+               (push (get-output-stream-string current) lines)
+               (when (and (< (1+ index) (length contents))
+                          (char= (char contents (1+ index)) #\Newline))
+                 (incf index))
+               (setf current (make-string-output-stream)))
+              ((char= character #\Newline)
+               (push (get-output-stream-string current) lines)
+               (setf current (make-string-output-stream)))
+              (t
+               (write-char character current))))
+          (incf index)
+        finally
+           (push (get-output-stream-string current) lines)
+           (return (nreverse lines))))
+
+(defun %file-edit-line-number-at-position (contents position)
+  (nth-value 0 (%file-edit-line-and-column contents position)))
+
+(defun %file-edit-line-span (contents start end)
+  (let* ((safe-end (if (> end start) (1- end) start))
+         (start-line (%file-edit-line-number-at-position contents start))
+         (end-line (%file-edit-line-number-at-position contents safe-end)))
+    (values start-line end-line)))
+
+(defun %file-edit-line-window (line-count start-line end-line)
+  (values (max 1 (- start-line +file-edit-preview-line-radius+))
+          (min line-count (+ end-line +file-edit-preview-line-radius+))))
+
+(defun %file-edit-format-line-preview-block (label lines changed-start changed-end)
+  (multiple-value-bind (window-start window-end)
+      (%file-edit-line-window (length lines) changed-start changed-end)
+    (with-output-to-string (stream)
+      (format stream "~A" label)
+      (loop for line-number from window-start to window-end do
+        (format stream "~%~A ~D| ~A"
+                (if (<= changed-start line-number changed-end)
+                    (if (string= label "before:") "-" "+")
+                    " ")
+                line-number
+                (nth (1- line-number) lines))))))
+
+(defun %file-edit-line-diff-preview (contents updated-contents position old-text new-text)
+  (let* ((old-end (+ position (length old-text)))
+         (new-end (+ position (length new-text)))
+         (before-lines (%file-edit-lines contents))
+         (after-lines (%file-edit-lines updated-contents)))
+    (multiple-value-bind (old-start-line old-end-line)
+        (%file-edit-line-span contents position old-end)
+      (multiple-value-bind (new-start-line new-end-line)
+          (%file-edit-line-span updated-contents position new-end)
+        (format nil "@@ lines ~D..~D -> ~D..~D @@~%~A~%~A"
+                old-start-line old-end-line new-start-line new-end-line
+                (%file-edit-format-line-preview-block "before:" before-lines old-start-line old-end-line)
+                (%file-edit-format-line-preview-block "after:" after-lines new-start-line new-end-line))))))
+
 (defun %file-edit-diff-preview (contents updated-contents position old-text new-text)
   (let* ((old-end (+ position (length old-text)))
          (new-end (+ position (length new-text)))
@@ -216,6 +282,7 @@
       :before-preview (%file-edit-snippet contents position old-end)
       :after-preview (%file-edit-snippet updated-contents position new-end)
       :diff-preview (%file-edit-diff-preview contents updated-contents position old-text new-text)
+      :line-diff-preview (%file-edit-line-diff-preview contents updated-contents position old-text new-text)
       :write-applied (not (null (not preview)))))))
 
 (defun file-edit-tool (input)

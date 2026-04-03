@@ -138,6 +138,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
         - `file-edit-tool.beforePreview`: 替换前的局部预览片段 [type: `string`]
         - `file-edit-tool.afterPreview`: 替换后的局部预览片段 [type: `string`]
         - `file-edit-tool.diffPreview`: 替换前后合并展示的稳定 diff 预览片段 [type: `string`]
+        - `file-edit-tool.lineDiffPreview`: 替换前后按行展示并带上下文的稳定 diff 预览片段 [type: `string`]
         - `file-edit-tool.writeApplied`: 是否已实际写回文件；preview 模式下为 null [type: `boolean`] [optional] [nullable]
         - `file-edit-tool.error`: 文件编辑失败摘要消息 [type: `string`]
         - `file-edit-tool.code`: 稳定错误码 [type: `string`]
@@ -220,6 +221,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
       - `file-edit-tool.beforePreview`: 替换前的局部预览片段 [type: `string`]
       - `file-edit-tool.afterPreview`: 替换后的局部预览片段 [type: `string`]
       - `file-edit-tool.diffPreview`: 替换前后合并展示的稳定 diff 预览片段 [type: `string`]
+      - `file-edit-tool.lineDiffPreview`: 替换前后按行展示并带上下文的稳定 diff 预览片段 [type: `string`]
       - `file-edit-tool.writeApplied`: 是否已实际写回文件；preview 模式下为 null [type: `boolean`] [optional] [nullable]
       - `file-edit-tool.error`: 文件编辑失败摘要消息 [type: `string`]
       - `file-edit-tool.code`: 稳定错误码 [type: `string`]
@@ -308,7 +310,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
   - `newText`: 替换后的新文本，可为空字符串 [type: `string`]
   - `occurrence`: 当旧文本出现多次时，指定要替换的第几处命中（1-based） [type: `integer`] [min: `1`] [optional] [nullable]
   - `preview`: 是否只预览替换摘要而不落盘，缺省为 false [type: `boolean`] [optional] [nullable]
-- Output Schema: `text`: edit summary; `json`: `result`, `path`, `preview`, `matchCount`, `totalMatches`, `selectedOccurrence`, `matchStart`, `matchEnd`, `matchStartLine`, `matchStartColumn`, `matchEndLine`, `matchEndColumn`, `matchedText`, `replacementText`, `beforePreview`, `afterPreview`, `diffPreview`, `writeApplied` [closed]
+- Output Schema: `text`: edit summary; `json`: `result`, `path`, `preview`, `matchCount`, `totalMatches`, `selectedOccurrence`, `matchStart`, `matchEnd`, `matchStartLine`, `matchStartColumn`, `matchEndLine`, `matchEndColumn`, `matchedText`, `replacementText`, `beforePreview`, `afterPreview`, `diffPreview`, `lineDiffPreview`, `writeApplied` [closed]
 - Output JSON Fields:
   - `result`: 文件编辑结果摘要 [type: `string`]
   - `path`: 本次编辑目标文件路径 [type: `string`]
@@ -327,6 +329,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
   - `beforePreview`: 替换前的局部预览片段 [type: `string`]
   - `afterPreview`: 替换后的局部预览片段 [type: `string`]
   - `diffPreview`: 替换前后合并展示的稳定 diff 预览片段 [type: `string`]
+  - `lineDiffPreview`: 替换前后按行展示并带上下文的稳定 diff 预览片段 [type: `string`]
   - `writeApplied`: 是否已实际写回文件；preview 模式下为 null [type: `boolean`] [optional] [nullable]
 - Error Output Schema: `text`: file edit failed output; `json`: `error`, `code` [closed]
 - Error JSON Fields:
