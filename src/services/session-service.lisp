@@ -20,43 +20,83 @@
                    :status :active
                    :version "0.1")))
 
-(defun %elapsed-seconds (start-time end-time)
-  (/ (- end-time start-time)
-     (float internal-time-units-per-second 1d0)))
+(defun %session-option-arguments (arguments)
+  (if (and arguments
+           (not (keywordp (first arguments))))
+      (rest arguments)
+      arguments))
+
+(defun %session-start-message (session)
+  (let ((history-index (cl-cc.models:session-history-index session))
+        (session-path (cl-cc.models:session-permission-snapshot session)))
+    (with-output-to-string (stream)
+      (format stream "新会话已创建: ~A" (cl-cc.models:session-id session))
+      (when history-index
+        (format stream "~%历史索引: ~A" history-index))
+      (when session-path
+        (format stream "~%快照已保存: ~A" session-path)))))
 
 (defun %make-session-start-result (session duration-seconds)
-  (let ((history-index (cl-cc.models:session-history-index session)))
+  (let ((history-index (cl-cc.models:session-history-index session))
+        (session-path (cl-cc.models:session-permission-snapshot session)))
     (cl-cc.lib:make-result
      :status :success
      :payload (list :session-id (cl-cc.models:session-id session)
                     :history-index history-index
                     :session-status (cl-cc.models:session-status session)
+                    :session-path session-path
+                    :saved (not (null session-path))
                     :duration-seconds duration-seconds
                     :exit-code 0)
-     :message (with-output-to-string (stream)
-                (format stream "新会话已创建: ~A" (cl-cc.models:session-id session))
-                (when history-index
-                  (format stream "~%历史索引: ~A" history-index))))))
+     :message (%session-start-message session))))
 
 (defun start-session-result (&rest arguments)
   "启动新会话并返回结构化结果对象。"
-  (let ((started-at (get-internal-real-time)))
-    (%make-session-start-result (apply #'start-session arguments)
-                                (%elapsed-seconds started-at (get-internal-real-time)))))
+  (let* ((started-at (get-internal-real-time))
+         (session-path (getf (%session-option-arguments arguments) :session-path))
+         (session (apply #'start-session arguments)))
+    (when session-path
+      (setf (cl-cc.models:session-permission-snapshot session) session-path)
+      (cl-cc.session:save-session session session-path))
+    (%make-session-start-result session
+                                (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time)))))
+
+(defun %session-snapshot-directory-message (path)
+  (format nil "session snapshot path is a directory: ~A" path))
+
+(defun %session-snapshot-directory-error (path)
+  (cl-cc.lib:make-cl-cc-error :invalid-session-path
+                              (%session-snapshot-directory-message path)))
+
+(defun %session-snapshot-directory-p (path)
+  (and path
+       (uiop:directory-exists-p path)))
+
+(defun %session-snapshot-file-p (path)
+  (and path
+       (probe-file path)
+       (not (%session-snapshot-directory-p path))))
 
 (defun resume-session (session-id)
   "恢复会话。"
-  (if (probe-file session-id)
-      (cl-cc.session:load-session session-id)
-      (make-instance 'cl-cc.models:session-state
-                     :session-id session-id
-                     :created-at "restored"
-                     :updated-at "restored"
-                     :history-index nil
-                     :context-summary nil
-                     :permission-snapshot nil
-                     :status :active
-                     :version "0.1")))
+  (cond
+    ((%session-snapshot-directory-p session-id)
+     (error (%session-snapshot-directory-error session-id)))
+    ((%session-snapshot-file-p session-id)
+     (cl-cc.session:load-session session-id))
+    (t
+     (make-instance 'cl-cc.models:session-state
+                    :session-id session-id
+                    :created-at "restored"
+                    :updated-at "restored"
+                    :history-index nil
+                    :context-summary nil
+                    :permission-snapshot nil
+                    :status :active
+                    :version "0.1"))))
+
+(defun %session-resume-message (session)
+  (format nil "会话已恢复: ~A" (cl-cc.models:session-id session)))
 
 (defun %make-session-resume-result (session duration-seconds)
   (cl-cc.lib:make-result
@@ -66,34 +106,127 @@
                   :session-status (cl-cc.models:session-status session)
                   :duration-seconds duration-seconds
                   :exit-code 0)
-   :message (format nil "会话已恢复: ~A" (cl-cc.models:session-id session))))
+   :message (%session-resume-message session)))
 
 (defun resume-session-result (session-id)
   "恢复会话并返回结构化结果对象。"
   (let ((started-at (get-internal-real-time)))
     (%make-session-resume-result (resume-session session-id)
-                                 (%elapsed-seconds started-at (get-internal-real-time)))))
+                                 (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time)))))
+
+(defun %session-run-failed-error (session-id-or-path)
+  (cl-cc.lib:make-cl-cc-error :session-run-failed
+                              (format nil "session loop failed for session: ~A" session-id-or-path)))
+
+(defun %session-run-save-path (session-id-or-path session explicit-path)
+  (or explicit-path
+  (and (cl-cc.services::%session-snapshot-file-p session-id-or-path)
+           session-id-or-path)
+      (cl-cc.models:session-permission-snapshot session)))
+
+(defun %session-run-input (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :input))))
+
+(defun %session-run-execution-status (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :execution-status))))
+
+(defun %session-run-result-summary (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :result))))
+
+(defun %session-run-tool-results (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :tool-results))))
+
+(defun %session-run-selected-tools (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :selected-tools))))
+
+(defun %session-run-execution-plan (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :execution-plan))))
+
+(defun %session-run-exit-code (session)
+  (if (eq (%session-run-execution-status session) :success)
+      0
+      1))
+
+(defun %session-run-message (session)
+  (let ((history-index (cl-cc.models:session-history-index session))
+        (input (%session-run-input session))
+        (execution-status (%session-run-execution-status session))
+        (result (%session-run-result-summary session))
+        (session-path (cl-cc.models:session-permission-snapshot session)))
+    (with-output-to-string (stream)
+      (format stream "会话已执行: ~A" (cl-cc.models:session-id session))
+      (when history-index
+        (format stream "~%历史索引: ~A" history-index))
+      (when input
+        (format stream "~%输入: ~A" input))
+      (when execution-status
+        (format stream "~%执行状态: ~A" (cl-cc.lib:string-designator-downcase execution-status)))
+      (when result
+        (format stream "~%执行结果: ~A" result))
+      (when session-path
+        (format stream "~%快照已保存: ~A" session-path)))))
+
+(defun %make-session-run-result (session duration-seconds)
+  (let ((session-path (cl-cc.models:session-permission-snapshot session))
+        (input (%session-run-input session))
+        (execution-status (%session-run-execution-status session))
+        (result (%session-run-result-summary session))
+        (tool-results (%session-run-tool-results session))
+        (selected-tools (%session-run-selected-tools session))
+        (execution-plan (%session-run-execution-plan session)))
+    (cl-cc.lib:make-result
+     :status :success
+     :payload (list :session-id (cl-cc.models:session-id session)
+                    :history-index (cl-cc.models:session-history-index session)
+                    :session-status (cl-cc.models:session-status session)
+                    :input input
+                    :execution-status execution-status
+                    :selected-tools selected-tools
+                    :execution-plan execution-plan
+                    :result result
+                    :tool-results tool-results
+                    :session-path session-path
+                    :saved (not (null session-path))
+                    :duration-seconds duration-seconds
+                    :exit-code (%session-run-exit-code session))
+     :message (%session-run-message session))))
+
+(defun run-session (session-id-or-path &key session-path input tool-ids)
+  "恢复会话，执行一步 loop，并在需要时保存更新后的快照。"
+  (let* ((session (resume-session session-id-or-path))
+         (summary (cl-cc.core:session-loop session :input input :tool-ids-override tool-ids))
+         (save-path (%session-run-save-path session-id-or-path session session-path)))
+    (unless summary
+      (error (%session-run-failed-error session-id-or-path)))
+    (when save-path
+      (setf (cl-cc.models:session-permission-snapshot session) save-path)
+      (cl-cc.session:save-session session save-path))
+    session))
+
+(defun run-session-result (session-id-or-path &key session-path input tool-ids)
+  "恢复会话并执行一步 loop，返回结构化结果对象。"
+  (let ((started-at (get-internal-real-time)))
+    (%make-session-run-result (run-session session-id-or-path :session-path session-path :input input :tool-ids tool-ids)
+                              (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time)))))
 
 (defun last-execution-results (context)
   "返回最近一次执行的所有工具结果归档。"
   (cl-cc.core:execution-context-results context))
 
-(defun %json-escape-string (value)
-  (with-output-to-string (stream)
-    (loop for character across value do
-      (case character
-        (#\\ (write-string "\\\\" stream))
-        (#\" (write-string "\\\"" stream))
-        (#\Newline (write-string "\\n" stream))
-        (#\Return (write-string "\\r" stream))
-        (#\Tab (write-string "\\t" stream))
-        (t (write-char character stream))))))
-
 (defun %fixture-status-name (status)
-  (string-downcase (string status)))
-
-(defun %json-boolean (value)
-  (if value "true" "false"))
+  (cl-cc.lib:string-designator-downcase status))
 
 (defun %successful-fixture-record-p (record)
   (eq (getf record :status) :success))
@@ -128,62 +261,40 @@
 (defun %non-zero-status-counts (status-counts)
   (remove-if-not (lambda (entry) (> (cdr entry) 0)) status-counts))
 
-(defun %render-status-counts-json (status-counts)
-  (with-output-to-string (stream)
-    (write-char #\{ stream)
-    (loop for entry in status-counts
-          for first-entry = t then nil do
-      (unless first-entry
-        (write-char #\, stream))
-      (format stream
-              "\"~A\":~D"
-              (%json-escape-string (car entry))
-              (cdr entry)))
-    (write-char #\} stream)))
+(defun %single-non-zero-status-p (status-counts)
+  (= (length (%non-zero-status-counts status-counts)) 1))
 
-(defun %render-status-counts-pretty-json (status-counts)
-  (with-output-to-string (stream)
-    (write-string "{" stream)
-    (loop with last-entry = (car (last status-counts))
-          for entry in status-counts
-          for first-entry = t then nil do
-      (write-char #\Newline stream)
-      (write-string "    " stream)
-      (format stream
-              "\"~A\": ~D"
-              (%json-escape-string (car entry))
-              (cdr entry))
-      (unless (eq entry last-entry)
-        (write-char #\, stream)))
-    (write-char #\Newline stream)
-    (write-string "  }" stream)))
+(defun %uniform-status-count-p (status-counts fixture-count status-name)
+  (and (%single-non-zero-status-p status-counts)
+       (= (%status-count status-counts status-name) fixture-count)))
+
+(defun %records-all-have-status-p (records status)
+  (and records
+       (every (lambda (record)
+                (eq (getf record :status) status))
+              records)))
 
 (defun %aggregate-fixture-status (records)
   (let* ((status-counts (%fixture-status-counts records))
-         (non-zero-statuses (%non-zero-status-counts status-counts))
          (fixture-count (length records))
-         (success-count (%status-count status-counts "success"))
-         (denied-count (%status-count status-counts "denied"))
-         (not-found-count (%status-count status-counts "not-found"))
-         (failed-count (%status-count status-counts "failed"))
-         (partial-count (%status-count status-counts "partial")))
+         (success-count (%status-count status-counts "success")))
     (cond
       ((= success-count fixture-count) "success")
-      ((and (= (length non-zero-statuses) 1) (= denied-count fixture-count)) "denied")
-      ((and (= (length non-zero-statuses) 1) (= not-found-count fixture-count)) "not-found")
-      ((and (= (length non-zero-statuses) 1) (= failed-count fixture-count)) "failed")
-      ((and (= (length non-zero-statuses) 1) (= partial-count fixture-count)) "partial")
-      ((> (length non-zero-statuses) 1) "partial")
+      ((%uniform-status-count-p status-counts fixture-count "denied") "denied")
+      ((%uniform-status-count-p status-counts fixture-count "not-found") "not-found")
+      ((%uniform-status-count-p status-counts fixture-count "failed") "failed")
+      ((%uniform-status-count-p status-counts fixture-count "partial") "partial")
+      ((not (%single-non-zero-status-p status-counts)) "partial")
       (t "failed"))))
 
 (defun %fixture-exit-code (status)
   (if (string= status "success") 0 1))
 
 (defun %status-keyword (status)
-  (intern (string-upcase status) :keyword))
+  (cl-cc.lib:string-designator-keyword status))
 
 (defun %fixture-status-tag (status)
-  (string-upcase (%fixture-status-name status)))
+  (cl-cc.lib:string-designator-upcase status))
 
 (defun %fixture-payload-record (record)
   (list :fixture-id (getf record :fixture-id)
@@ -209,7 +320,7 @@
                   (getf record :fixture-id)
                   (%fixture-text-record record))))))
 
-(defun %fixture-result-payload (records)
+(defun %fixture-result-summary (records)
   (let* ((status (%aggregate-fixture-status records))
          (status-counts (%fixture-status-counts records))
          (fixture-count (length records))
@@ -219,29 +330,39 @@
                                    :key (lambda (record) (getf record :duration-seconds 0d0))
                                    :initial-value 0d0))
          (exit-code (%fixture-exit-code status)))
-    (list :fixture-count fixture-count
+    (list :status status
+          :status-counts status-counts
+          :fixture-count fixture-count
           :successful-count successful-count
           :failed-count failed-count
           :duration-seconds duration-seconds
-          :status-counts status-counts
-          :ok (string= status "success")
           :exit-code exit-code
+          :ok (string= status "success"))))
+
+(defun %fixture-result-payload (records &optional summary)
+  (let ((summary (or summary
+                     (%fixture-result-summary records))))
+    (list :fixture-count (getf summary :fixture-count)
+          :successful-count (getf summary :successful-count)
+          :failed-count (getf summary :failed-count)
+          :duration-seconds (getf summary :duration-seconds)
+          :status-counts (getf summary :status-counts)
+          :ok (getf summary :ok)
+          :exit-code (getf summary :exit-code)
           :results (mapcar #'%fixture-payload-record records))))
 
 (defun %make-fixture-result (records)
-  (let ((status (%aggregate-fixture-status records)))
-    (cl-cc.lib:make-result :status (%status-keyword status)
-                           :payload (%fixture-result-payload records)
+  (let ((summary (%fixture-result-summary records)))
+    (cl-cc.lib:make-result :status (%status-keyword (getf summary :status))
+                           :payload (%fixture-result-payload records summary)
                            :message (%fixture-text-message records))))
 
 (defun %derived-fixture-record-status (context)
   (let ((results (cl-cc.core:execution-context-results context)))
     (cond
       ((eq (cl-cc.core:execution-context-status context) :success) :success)
-      ((and results (every (lambda (entry) (eq (getf entry :status) :denied)) results))
-       :denied)
-      ((and results (every (lambda (entry) (eq (getf entry :status) :not-found)) results))
-       :not-found)
+      ((%records-all-have-status-p results :denied) :denied)
+      ((%records-all-have-status-p results :not-found) :not-found)
       (t :failed))))
 
 
@@ -251,31 +372,32 @@
          (tool-ids (or tool-ids-override (select-tools fixture-id)))
          (context (cl-cc.core:make-execution-context :command "run" :input (getf fixture :input fixture-id) :output nil :status nil))
          (result (apply #'cl-cc.core:run-execution-cycle context tool-ids))
-         (duration-seconds (/ (- (get-internal-real-time) started-at)
-                              (float internal-time-units-per-second 1d0))))
+         (duration-seconds (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))))
     (list :fixture-id fixture-id
           :status (%derived-fixture-record-status context)
           :duration-seconds duration-seconds
           :result result
           :tool-results (cl-cc.core:execution-context-results context))))
 
+(defun %collect-fixture-records (fixture-ids tool-ids-override)
+  (mapcar (lambda (fixture-id)
+            (%run-fixture-record fixture-id tool-ids-override))
+          fixture-ids))
+
+(defun %fixture-result-values (result-object)
+  (values result-object
+          (getf (cl-cc.lib:result-payload result-object) :exit-code)))
+
 (defun run-fixtures (&rest arguments)
   "运行多个夹具并返回结构化结果对象。"
   (let* ((fixture-ids (first arguments))
          (tool-ids-override (getf (rest arguments) :tool-ids))
-         (records (mapcar (lambda (fixture-id)
-                            (%run-fixture-record fixture-id tool-ids-override))
-                          fixture-ids))
-         (result-object (%make-fixture-result records)))
-    (values result-object
-            (getf (cl-cc.lib:result-payload result-object) :exit-code))))
+         (records (%collect-fixture-records fixture-ids tool-ids-override)))
+    (%fixture-result-values (%make-fixture-result records))))
 
 (defun run-fixture (&rest arguments)
   "运行指定夹具并返回结构化结果对象。"
   (let* ((fixture-id (first arguments))
          (tool-ids-override (getf (rest arguments) :tool-ids))
-         (record (%run-fixture-record fixture-id tool-ids-override))
-         (result-object (%make-fixture-result (list record))))
-    (values
-     result-object
-     (getf (cl-cc.lib:result-payload result-object) :exit-code))))
+         (records (%collect-fixture-records (list fixture-id) tool-ids-override)))
+    (%fixture-result-values (%make-fixture-result records))))

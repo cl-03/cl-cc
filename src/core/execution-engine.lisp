@@ -9,45 +9,235 @@
     (t :failed)))
 
 (defun %schema-field-keyword (field)
-  (intern (string-upcase (cl-cc::%output-schema-json-field-name field)) :keyword))
+  (intern (with-output-to-string (stream)
+            (loop for character across (cl-cc::%output-schema-json-field-name field)
+                  for first-character = t then nil do
+              (when (and (upper-case-p character)
+                         (not first-character))
+                (write-char #\- stream))
+              (write-char (char-upcase character) stream)))
+          :keyword))
 
 (defun %schema-field-source (field default-source)
   (getf field :source default-source))
 
+(defun %raw-result-field-value (raw-result field-key)
+  (and (listp raw-result)
+       (getf raw-result field-key)))
+
 (defun %schema-source-value (source raw-result condition)
-  (case source
-    (:raw-result raw-result)
-    (:error-message (and condition (cl-cc.lib:error-message condition)))
-    (:error-code (and condition (string-upcase (string (cl-cc.lib:error-code condition)))))
+  (cond
+    ((eq source :raw-result)
+     raw-result)
+    ((eq source :error-message)
+     (and condition (cl-cc.lib:error-message condition)))
+    ((eq source :error-code)
+     (and condition (cl-cc.lib:string-designator-upcase (cl-cc.lib:error-code condition))))
+    ((and (consp source)
+          (eq (first source) :raw-result-field))
+     (%raw-result-field-value raw-result (second source)))
     (t nil)))
+
+(defun %tool-result-summary (result)
+  (cond
+    ((and (listp result)
+          (stringp (getf result :summary)))
+     (getf result :summary))
+    ((stringp result)
+     result)
+    (t
+     (princ-to-string result))))
+
+(defun %materialized-schema-field (field &key raw-result condition)
+  (let ((field-key (%schema-field-keyword field))
+        (field-value (%schema-source-value (%schema-field-source field :raw-result)
+                                           raw-result
+                                           condition)))
+    (list field-key field-value)))
 
 (defun %materialize-schema-output (schema &key raw-result condition)
   (let ((json-fields (and schema (getf schema :json)))
         (output nil))
     (dolist (field json-fields output)
-      (let* ((field-key (%schema-field-keyword field))
-             (field-value (%schema-source-value (%schema-field-source field :raw-result)
-                                                raw-result
-                                                condition)))
-        (setf output (append output (list field-key field-value)))))))
+      (setf output (append output (%materialized-schema-field field
+                                                             :raw-result raw-result
+                                                             :condition condition))))))
+
+(defun %tool-schema-output (tool-id schema-accessor &key raw-result condition)
+  (let* ((definition (cl-cc.tools:find-tool-definition tool-id))
+         (schema (and definition (funcall schema-accessor definition))))
+    (when schema
+      (%materialize-schema-output schema
+                                  :raw-result raw-result
+                                  :condition condition))))
 
 (defun %tool-success-output (tool-id raw-result)
-  (let* ((definition (cl-cc.tools:find-tool-definition tool-id))
-         (schema (and definition (cl-cc.models:tool-output-schema definition)))
-         (json-fields (and schema (getf schema :json))))
-    (cond
-      ((null json-fields) nil)
-      (t (%materialize-schema-output schema :raw-result raw-result)))))
+  (%tool-schema-output tool-id
+                       #'cl-cc.models:tool-output-schema
+                       :raw-result raw-result))
 
 (defun %tool-error-output (tool-id condition)
-  (let* ((definition (cl-cc.tools:find-tool-definition tool-id))
-         (schema (and definition (cl-cc.models:tool-error-output-schema definition))))
-    (when schema
-      (%materialize-schema-output schema :condition condition))))
+  (%tool-schema-output tool-id
+                       #'cl-cc.models:tool-error-output-schema
+                       :condition condition))
 
-(defun %elapsed-seconds (start-time end-time)
-  (/ (- end-time start-time)
-     (float internal-time-units-per-second 1d0)))
+(defun %execution-result-record (tool-id status duration-seconds &key result error error-code output)
+  (append (list :tool tool-id
+                :status status)
+          (when result
+            (list :result result))
+          (when error
+            (list :error error))
+          (when error-code
+            (list :error-code error-code))
+          (list :duration-seconds duration-seconds
+                :output output)))
+
+(defun %record-execution-result (results tool-id status duration-seconds &key result error error-code output)
+  (push (%execution-result-record tool-id
+                                  status
+                                  duration-seconds
+                                  :result result
+                                  :error error
+                                  :error-code error-code
+                                  :output output)
+        results)
+  results)
+
+(defun %finalize-execution-context (context results status output)
+  (setf (execution-context-status context) status)
+  (setf (execution-context-output context) output)
+  (setf (execution-context-results context) (reverse results))
+  context)
+
+(defun %execution-action (input tool-id)
+  (if (and (stringp input)
+           (string= input "restricted"))
+      'delete-file
+      (if (member tool-id '("file-read-tool" "directory-list-tool" "grep-tool") :test #'string=)
+          "file-read"
+          (if (member tool-id '("file-write-tool" "file-edit-tool") :test #'string=)
+              "file-write"
+              tool-id))))
+
+(defun %fixture-execution-context-p (context)
+  (not (string= (or (execution-context-command context) "") "session-loop")))
+
+(defun %planned-tool-input (context tool-id fallback-input)
+  (let ((tool-inputs (execution-context-tool-inputs context)))
+    (or (cdr (assoc tool-id tool-inputs :test #'string=))
+        fallback-input)))
+
+(defun %execution-tool-input (context input)
+  (if (and (%fixture-execution-context-p context)
+           (stringp input))
+      (format nil "fixture-input-~A" input)
+      input))
+
+(defun %execution-context-tool-runner-context (context action input)
+  (list :action action
+        :fixture input
+        :approval-mode (execution-context-approval-mode context)
+        :approval-callback (execution-context-approval-callback context)))
+
+(defun %halt-on-denied-p (context)
+  (not (null (execution-context-halt-on-denied context))))
+
+(defun %denied-attempt-should-stop-p (context condition)
+  (and (%halt-on-denied-p context)
+       (eq (cl-cc.lib:error-code condition) :permission-denied)))
+
+(defun %missing-tool-record-fields ()
+  (list :error "tool not found"
+        :error-code :tool-not-found
+        :output nil))
+
+(defun %successful-tool-attempt-fields (tool-id result)
+  (list :result (%tool-result-summary result)
+        :output (%tool-success-output tool-id result)))
+
+(defun %failed-tool-attempt-fields (tool-id condition)
+  (list :error (cl-cc.lib:error-message condition)
+        :error-code (cl-cc.lib:error-code condition)
+        :output (%tool-error-output tool-id condition)))
+
+(defun %record-missing-tool-result (results tool-id)
+  (apply #'%record-execution-result
+         results
+         tool-id
+         :not-found
+         0d0
+         (%missing-tool-record-fields)))
+
+(defun %attempt-duration-seconds (started-at)
+  (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time)))
+
+(defun %record-successful-tool-attempt (results tool-id result duration-seconds)
+  (apply #'%record-execution-result
+         results
+         tool-id
+         :success
+         duration-seconds
+         (%successful-tool-attempt-fields tool-id result)))
+
+(defun %record-failed-tool-attempt (results tool-id condition duration-seconds)
+  (apply #'%record-execution-result
+         results
+         tool-id
+         (%execution-error-status condition)
+         duration-seconds
+         (%failed-tool-attempt-fields tool-id condition)))
+
+(defun %successful-execution-summary (tool-id result)
+  (format nil "tool:~A result:~A" tool-id (%tool-result-summary result)))
+
+(defun %failed-execution-summary (results)
+  (format nil "all tools failed: ~A" (reverse results)))
+
+(defun %successful-cycle-outcome (context results tool-id result)
+  (%finalize-execution-context context results :success (%tool-result-summary result))
+  (%successful-execution-summary tool-id result))
+
+(defun %failed-cycle-outcome (context results)
+  (%finalize-execution-context context results :failed nil)
+  (%failed-execution-summary results))
+
+(defun %successful-attempt-values (results tool-id result duration-seconds)
+  (values (%record-successful-tool-attempt results tool-id result duration-seconds)
+          result
+          t
+          nil))
+
+(defun %failed-attempt-values (results tool-id condition duration-seconds &key stop-p)
+  (values (%record-failed-tool-attempt results tool-id condition duration-seconds)
+          nil
+          nil
+          stop-p))
+
+(defun %missing-tool-values (results tool-id)
+  (values (%record-missing-tool-result results tool-id)
+          nil
+          nil
+          nil))
+
+(defun %run-tool-attempt (context results tool-id input action)
+  (let ((started-at (get-internal-real-time)))
+    (handler-case
+        (let* ((tool-input (%planned-tool-input context tool-id input))
+               (result (cl-cc.services:run-tool tool-id (%execution-tool-input context tool-input)
+                                                :context (%execution-context-tool-runner-context context action input)))
+               (duration-seconds (%attempt-duration-seconds started-at)))
+          (%successful-attempt-values results tool-id result duration-seconds))
+      (cl-cc.lib:cl-cc-error (condition)
+        (let ((duration-seconds (%attempt-duration-seconds started-at)))
+          (%failed-attempt-values results tool-id condition duration-seconds
+                                  :stop-p (%denied-attempt-should-stop-p context condition)))))))
+
+(defun %execute-tool-cycle-step (context results tool-id input)
+  (let ((tool-fn (cl-cc.tools:find-tool tool-id)))
+    (if tool-fn
+        (%run-tool-attempt context results tool-id input (%execution-action input tool-id))
+        (%missing-tool-values results tool-id))))
 
 ;;; 支持多工具循环执行与结果归档
 (defun run-execution-cycle (context &rest tool-ids)
@@ -55,41 +245,13 @@
   (let ((results '())
         (input (execution-context-input context)))
     (dolist (tool-id tool-ids)
-      (let ((action (if (string= input "restricted") 'delete-file tool-id)))
-      (let ((tool-fn (cl-cc.tools:find-tool tool-id)))
-        (if tool-fn
-            (let ((started-at (get-internal-real-time)))
-              (handler-case
-                  (let* ((result (cl-cc.services:run-tool tool-id (format nil "fixture-input-~A" input)
-                                                          :context (list :action action :fixture input)))
-                         (duration-seconds (%elapsed-seconds started-at (get-internal-real-time))))
-                    (push (list :tool tool-id
-                                :status :success
-                                :result result
-                                :duration-seconds duration-seconds
-                                :output (%tool-success-output tool-id result))
-                          results)
-                    (setf (execution-context-output context) result)
-                    (setf (execution-context-status context) :success)
-                    (setf (execution-context-results context) (reverse results))
-                    (return-from run-execution-cycle (format nil "tool:~A result:~A" tool-id result)))
-                (cl-cc.lib:cl-cc-error (e)
-                  (let ((duration-seconds (%elapsed-seconds started-at (get-internal-real-time))))
-                    (push (list :tool tool-id
-                                :status (%execution-error-status e)
-                                :error (cl-cc.lib:error-message e)
-                                :error-code (cl-cc.lib:error-code e)
-                                :duration-seconds duration-seconds
-                                :output (%tool-error-output tool-id e))
-                          results)))))
-          (push (list :tool tool-id
-                :status :not-found
-                :error "tool not found"
-                :error-code :tool-not-found
-                :duration-seconds 0d0
-                :output nil)
-            results)))))
-    (setf (execution-context-status context) :failed)
-    (setf (execution-context-output context) nil)
-    (setf (execution-context-results context) (reverse results))
-    (format nil "all tools failed: ~A" (reverse results))))
+      (multiple-value-bind (updated-results result success-p stop-p)
+          (%execute-tool-cycle-step context results tool-id input)
+        (setf results updated-results)
+        (when success-p
+          (return-from run-execution-cycle
+            (%successful-cycle-outcome context results tool-id result)))
+        (when stop-p
+          (return-from run-execution-cycle
+            (%failed-cycle-outcome context results)))))
+    (%failed-cycle-outcome context results)))

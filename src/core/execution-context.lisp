@@ -5,6 +5,10 @@
   session
   command
   input
+  tool-inputs
+  approval-mode
+  approval-callback
+  halt-on-denied
   output
   status
   results)

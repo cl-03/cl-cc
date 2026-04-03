@@ -20,7 +20,7 @@ description: "Task list template for feature implementation"
 
 ## Path Conventions
 
-- **Single Common Lisp project**: `project.asd`, `src/`, `tests/` at repository root
+- **Single Common Lisp project**: `cl-cc.asd`, `src/`, `tests/` at repository root
 - **Web app**: `backend/src/`, `frontend/src/`
 - **Mobile**: `api/src/`, `ios/src/` or `android/src/`
 - Paths shown below assume a Common Lisp-first single project - adjust based on plan.md structure

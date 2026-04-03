@@ -9,7 +9,7 @@ Auto-generated from all feature plans. Last updated: 2026-04-01
 ## Project Structure
 
 ```text
-project.asd
+cl-cc.asd
 src/
 	cli/
 	core/
@@ -28,9 +28,9 @@ specs/
 
 ## Commands
 
-- Load the ASDF system in SBCL: `sbcl --load project.asd`
-- Load and run the CLI entrypoint during development: `sbcl --load project.asd --eval "(asdf:load-system :cl-cc)"`
-- Run the full test suite: `sbcl --load project.asd --eval "(asdf:test-system :cl-cc)" --quit`
+- Load the ASDF system in SBCL: `sbcl --load cl-cc.asd`
+- Load and run the CLI entrypoint during development: `sbcl --load cl-cc.asd --eval "(asdf:load-system :cl-cc)"`
+- Run the full test suite: `sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl-cc)" --quit`
 - Run focused tests while iterating: load the system in SBCL and invoke the relevant FiveAM suite manually
 - Keep fixture and regression runs local and reproducible; prefer scripted invocations over ad hoc REPL state
 

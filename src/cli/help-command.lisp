@@ -4,6 +4,13 @@
 (defparameter +command-reference-start-marker+ "<!-- BEGIN GENERATED COMMAND REFERENCE -->")
 (defparameter +command-reference-end-marker+ "<!-- END GENERATED COMMAND REFERENCE -->")
 
+(defun %documentation-markers-not-found-message ()
+        "command reference markers not found in target document")
+
+(defun %documentation-markers-not-found-error ()
+        (cl-cc.lib:make-cl-cc-error :documentation-markers-not-found
+                                    (%documentation-markers-not-found-message)))
+
 (defun %format-command-usage (definition)
         (let ((usage-tail (cl-cc.core::command-usage-tail definition)))
                 (if (> (length usage-tail) 0)
@@ -32,104 +39,40 @@
                                                   (format nil "cl-cc ~{~A~^ ~}" alias))
                                         aliases)))))
 
-(defun %output-schema-json-field-name (field)
+(defun %plist-property (plist key)
+        (cl-cc.services::%plist-property plist key))
+
+(defun %schema-field-property (field key)
+        (cl-cc.services::%schema-field-property field key))
+
+(defun %relation-property (relation key)
+        (cl-cc.services::%relation-property relation key))
+
+(defun %schema-field-name (field)
         (if (stringp field)
                 field
-                (getf field :name)))
+                (%schema-field-property field :name)))
 
-(defun %output-schema-json-field-summary (field)
-        (and (listp field)
-             (getf field :summary)))
+(defun %output-schema-json-field-name (field)
+        (%schema-field-name field))
 
-(defun %output-schema-json-field-enum (field)
-        (and (listp field)
-             (getf field :enum)))
+(defun %schema-field-required-p (field)
+        (cl-cc.services::%schema-field-required-p field))
 
-(defun %output-schema-json-field-nullable-p (field)
-        (and (listp field)
-             (getf field :nullable)))
+(defun %schema-closed-p (schema)
+        (cl-cc.services::%schema-closed-p schema))
 
-(defun %output-schema-json-field-required-p (field)
-        (if (and (listp field)
-                 (not (eq (getf field :required :missing) :missing)))
-                (getf field :required)
-                t))
-
-(defun %output-schema-closed-p (schema)
-        (and (listp schema)
-             (getf schema :closed)))
-
-(defun %output-schema-json-field-closed-p (field)
+(defun %schema-field-closed-p (field)
         (if (and (listp field)
                  (not (eq (getf field :closed :missing) :missing)))
                 (getf field :closed)
-                (let* ((schema-refs (%output-schema-json-field-tool-schema-refs field))
+                (let* ((schema-refs (%schema-field-property field :tool-schema-refs))
                        (schema (%tool-schema-from-ref (first schema-refs))))
-                        (%output-schema-closed-p schema))))
-
-(defun %output-schema-json-field-type (field)
-        (and (listp field)
-             (getf field :type)))
-
-(defun %output-schema-json-field-minimum (field)
-        (and (listp field)
-             (getf field :minimum)))
-
-(defun %output-schema-json-field-min-items (field)
-        (and (listp field)
-             (getf field :min-items)))
-
-(defun %output-schema-json-field-equals-field (field)
-        (and (listp field)
-             (getf field :equals-field)))
-
-(defun %output-schema-json-field-equals-collection-size-of (field)
-        (and (listp field)
-             (getf field :equals-collection-size-of)))
-
-(defun %output-schema-json-field-equals-sum-of-fields (field)
-        (and (listp field)
-             (getf field :equals-sum-of-fields)))
-
-(defun %output-schema-json-field-equals-field-when-value (field)
-        (and (listp field)
-             (getf field :equals-field-when-value)))
-
-(defun %output-schema-json-field-true-when-zero-field (field)
-        (and (listp field)
-             (getf field :true-when-zero-field)))
-
-(defun %output-schema-json-field-enum-when-zero-field (field)
-        (and (listp field)
-             (getf field :enum-when-zero-field)))
-
-(defun %output-schema-json-field-enum-when-nonzero-field (field)
-        (and (listp field)
-             (getf field :enum-when-nonzero-field)))
-
-(defun %output-schema-relation-field-name (relation)
-        (and (listp relation)
-             (getf relation :field)))
-
-(defun %output-schema-relation-when-field-name (relation)
-        (and (listp relation)
-             (getf relation :when-field)))
-
-(defun %output-schema-relation-value (relation)
-        (and (listp relation)
-             (getf relation :value)))
-
-(defun %output-schema-relation-values (relation)
-        (and (listp relation)
-             (getf relation :values)))
-
-(defun %output-schema-relation-fields (relation)
-        (and (listp relation)
-             (getf relation :fields)))
+                        (%schema-closed-p schema))))
 
 (defun %format-conditional-enum-summary (label relation)
-        (let ((field-name (%output-schema-relation-field-name relation))
-              (values (%output-schema-relation-values relation)))
+        (let ((field-name (%relation-property relation :field))
+              (values (%relation-property relation :values)))
                 (when (and field-name values)
                         (format nil "[~A: `~A` => ~{`~A`~^, ~}]"
                                 label
@@ -137,9 +80,9 @@
                                 values))))
 
 (defun %format-conditional-equals-summary (relation)
-        (let ((when-field (%output-schema-relation-when-field-name relation))
-              (when-value (%output-schema-relation-value relation))
-              (field-name (%output-schema-relation-field-name relation)))
+        (let ((when-field (%relation-property relation :when-field))
+              (when-value (%relation-property relation :value))
+              (field-name (%relation-property relation :field)))
                 (when (and when-field field-name (not (null when-value)))
                         (format nil "[matches-when: `~A` = `~A` => `~A`]"
                                 when-field
@@ -147,22 +90,10 @@
                                 field-name))))
 
 (defun %format-sum-of-fields-summary (relation)
-        (let ((fields (%output-schema-relation-fields relation)))
+        (let ((fields (%relation-property relation :fields)))
                 (when fields
                         (format nil "[sum-of: ~{`~A`~^, ~}]"
                                 fields))))
-
-(defun %output-schema-json-field-maximum (field)
-        (and (listp field)
-             (getf field :maximum)))
-
-(defun %output-schema-json-field-children (field)
-        (and (listp field)
-             (getf field :fields)))
-
-(defun %output-schema-json-field-tool-schema-refs (field)
-        (and (listp field)
-             (getf field :tool-schema-refs)))
 
 (defun %tool-schema-from-ref (ref)
         (let* ((definition (cl-cc.tools:find-tool-definition (getf ref :tool-id)))
@@ -172,62 +103,53 @@
                                 (:error-output (cl-cc.models:tool-error-output-schema definition))
                                 (t (cl-cc.models:tool-output-schema definition))))))
 
+(defun %schema-field-display-metadata (field &key (name (%schema-field-name field)))
+        (list :name name
+              :summary (%schema-field-property field :summary)
+              :type (%schema-field-property field :type)
+              :minimum (%schema-field-property field :minimum)
+              :min-items (%schema-field-property field :min-items)
+              :equals-field (%schema-field-property field :equals-field)
+              :equals-collection-size-of (%schema-field-property field :equals-collection-size-of)
+              :equals-sum-of-fields (%schema-field-property field :equals-sum-of-fields)
+              :equals-field-when-value (%schema-field-property field :equals-field-when-value)
+              :true-when-zero-field (%schema-field-property field :true-when-zero-field)
+              :enum-when-zero-field (%schema-field-property field :enum-when-zero-field)
+              :enum-when-nonzero-field (%schema-field-property field :enum-when-nonzero-field)
+              :maximum (%schema-field-property field :maximum)
+              :enum (%schema-field-property field :enum)
+              :closed (%schema-field-closed-p field)
+              :required (%schema-field-required-p field)
+              :nullable (%schema-field-property field :nullable)
+              :fields (%schema-field-property field :fields)))
+
 (defun %prefixed-schema-fields (ref)
         (let* ((schema (%tool-schema-from-ref ref))
                (tool-id (getf ref :tool-id))
                (json-fields (and schema (%schema-json-fields schema))))
                 (when json-fields
                         (mapcar (lambda (field)
-                                          (list :name (format nil "~A.~A" tool-id (%output-schema-json-field-name field))
-                                                :summary (%output-schema-json-field-summary field)
-                                                :type (%output-schema-json-field-type field)
-                                                                :minimum (%output-schema-json-field-minimum field)
-                                                :min-items (%output-schema-json-field-min-items field)
-                                                :equals-field (%output-schema-json-field-equals-field field)
-                                                :equals-collection-size-of (%output-schema-json-field-equals-collection-size-of field)
-                                                                :equals-sum-of-fields (%output-schema-json-field-equals-sum-of-fields field)
-                                                                :equals-field-when-value (%output-schema-json-field-equals-field-when-value field)
-                                                :true-when-zero-field (%output-schema-json-field-true-when-zero-field field)
-                                                :enum-when-zero-field (%output-schema-json-field-enum-when-zero-field field)
-                                                :enum-when-nonzero-field (%output-schema-json-field-enum-when-nonzero-field field)
-                                                                                    :maximum (%output-schema-json-field-maximum field)
-                                                :enum (%output-schema-json-field-enum field)
-                                                :closed (%output-schema-json-field-closed-p field)
-                                                                                :required (%output-schema-json-field-required-p field)
-                                                :nullable (%output-schema-json-field-nullable-p field)
-                                                :fields (%output-schema-json-field-children field)))
+                                                        (%schema-field-display-metadata field
+                                                                                        :name (format nil "~A.~A" tool-id (%schema-field-name field))))
                                 json-fields))))
 
 (defun %format-json-schema-summary-part (json-fields closed-p)
         (format nil "`json`: `~{~A~^`, `~}`~:[~; [closed]~]"
-                (mapcar #'%output-schema-json-field-name json-fields)
+                (mapcar #'%schema-field-name json-fields)
                 closed-p))
 
 (defun %output-schema-json-field-derived-children (field)
-        (let ((children (%output-schema-json-field-children field))
-              (schema-refs (%output-schema-json-field-tool-schema-refs field)))
+        (let ((children (%schema-field-property field :fields))
+              (schema-refs (%schema-field-property field :tool-schema-refs)))
                 (append children
                         (loop for ref in schema-refs
                               append (%prefixed-schema-fields ref)))))
 
 (defun %format-command-reference-output-schema (definition)
-        (let ((output-schema (cl-cc.models:command-output-schema definition)))
-                (when output-schema
-                        (let ((text-schema (getf output-schema :text))
-                              (json-fields (getf output-schema :json))
-                              (parts nil))
-                                (when text-schema
-                                        (push (format nil "`text`: ~A" text-schema) parts))
-                                (when json-fields
-                                        (push (%format-json-schema-summary-part json-fields
-                                                                                (%output-schema-closed-p output-schema))
-                                              parts))
-                                (format nil "~{~A~^; ~}" (nreverse parts))))))
+        (%format-schema-summary (cl-cc.models:command-output-schema definition)))
 
 (defun %format-command-reference-json-field-lines (definition)
-        (let ((json-fields (getf (cl-cc.models:command-output-schema definition) :json)))
-                (when json-fields
-                        (%format-json-field-lines json-fields))))
+        (%format-schema-json-field-lines (cl-cc.models:command-output-schema definition)))
 
 (defun %schema-text-description (schema)
         (getf schema :text))
@@ -244,7 +166,7 @@
                                 (push (format nil "`text`: ~A" text-schema) parts))
                         (when json-fields
                                 (push (%format-json-schema-summary-part json-fields
-                                                                        (%output-schema-closed-p schema))
+                                                                        (%schema-closed-p schema))
                                       parts))
                         (format nil "~{~A~^; ~}" (nreverse parts)))))
 
@@ -253,43 +175,64 @@
                 (when json-fields
                         (%format-json-field-lines json-fields))))
 
+(defun %json-field-annotation-parts (field)
+          (let ((enum-values (%schema-field-property field :enum))
+                  (closed-p (%schema-field-closed-p field))
+                  (required-p (%schema-field-required-p field))
+                  (nullable-p (%schema-field-property field :nullable))
+                  (field-type (%schema-field-property field :type))
+                  (minimum-value (%schema-field-property field :minimum))
+                  (minimum-items (%schema-field-property field :min-items))
+                  (equals-field (%schema-field-property field :equals-field))
+                  (equals-collection-size-of (%schema-field-property field :equals-collection-size-of))
+                  (equals-sum-of-fields-summary (%format-sum-of-fields-summary (%schema-field-property field :equals-sum-of-fields)))
+                  (equals-field-when-value-summary (%format-conditional-equals-summary (%schema-field-property field :equals-field-when-value)))
+                  (true-when-zero-field (%schema-field-property field :true-when-zero-field))
+                  (enum-when-zero-summary (%format-conditional-enum-summary "allowed-when-zero" (%schema-field-property field :enum-when-zero-field)))
+                  (enum-when-nonzero-summary (%format-conditional-enum-summary "allowed-when-nonzero" (%schema-field-property field :enum-when-nonzero-field)))
+                  (maximum-value (%schema-field-property field :maximum))
+              (parts nil))
+                (when field-type
+                        (push (format nil "[type: `~(~A~)`]" field-type) parts))
+                (when minimum-value
+                        (push (format nil "[min: `~A`]" minimum-value) parts))
+                (when minimum-items
+                        (push (format nil "[min-items: `~A`]" minimum-items) parts))
+                (when equals-collection-size-of
+                        (push (format nil "[count-of: `~A`]" equals-collection-size-of) parts))
+                (when equals-field
+                        (push (format nil "[matches: `~A`]" equals-field) parts))
+                (when equals-sum-of-fields-summary
+                        (push equals-sum-of-fields-summary parts))
+                (when equals-field-when-value-summary
+                        (push equals-field-when-value-summary parts))
+                (when true-when-zero-field
+                        (push (format nil "[true-when-zero: `~A`]" true-when-zero-field) parts))
+                (when enum-when-zero-summary
+                        (push enum-when-zero-summary parts))
+                (when enum-when-nonzero-summary
+                        (push enum-when-nonzero-summary parts))
+                (when maximum-value
+                        (push (format nil "[max: `~A`]" maximum-value) parts))
+                (when enum-values
+                        (push (format nil "[allowed: ~{`~A`~^, ~}]" enum-values) parts))
+                (unless required-p
+                        (push "[optional]" parts))
+                (when nullable-p
+                        (push "[nullable]" parts))
+                (when closed-p
+                        (push "[closed]" parts))
+                (nreverse parts)))
+
 (defun %format-json-field-line (field)
-        (let ((field-name (%output-schema-json-field-name field))
-              (field-summary (%output-schema-json-field-summary field))
-              (enum-values (%output-schema-json-field-enum field))
-              (closed-p (%output-schema-json-field-closed-p field))
-              (required-p (%output-schema-json-field-required-p field))
-              (nullable-p (%output-schema-json-field-nullable-p field))
-              (field-type (%output-schema-json-field-type field))
-              (minimum-value (%output-schema-json-field-minimum field))
-              (minimum-items (%output-schema-json-field-min-items field))
-              (equals-field (%output-schema-json-field-equals-field field))
-              (equals-collection-size-of (%output-schema-json-field-equals-collection-size-of field))
-              (equals-sum-of-fields-summary (%format-sum-of-fields-summary (%output-schema-json-field-equals-sum-of-fields field)))
-              (equals-field-when-value-summary (%format-conditional-equals-summary (%output-schema-json-field-equals-field-when-value field)))
-              (true-when-zero-field (%output-schema-json-field-true-when-zero-field field))
-              (enum-when-zero-summary (%format-conditional-enum-summary "allowed-when-zero" (%output-schema-json-field-enum-when-zero-field field)))
-              (enum-when-nonzero-summary (%format-conditional-enum-summary "allowed-when-nonzero" (%output-schema-json-field-enum-when-nonzero-field field)))
-              (maximum-value (%output-schema-json-field-maximum field)))
+        (let ((field-name (%schema-field-name field))
+              (field-summary (%schema-field-property field :summary))
+              (annotations (%json-field-annotation-parts field)))
                 (if field-summary
-                        (format nil "`~A`: ~A~@[ [type: `~(~A~)`]~]~@[ [min: `~A`]~]~@[ [min-items: `~A`]~]~@[ [count-of: `~A`]~]~@[ [matches: `~A`]~]~@[ ~A~]~@[ ~A~]~@[ [true-when-zero: `~A`]~]~@[ ~A~]~@[ ~A~]~@[ [max: `~A`]~]~@[ [allowed: ~{`~A`~^, ~}]~]~:[ [optional]~;~]~:[~; [nullable]~]~:[~; [closed]~]"
+                        (format nil "`~A`: ~A~@[ ~{~A~^ ~}~]"
                                 field-name
                                 field-summary
-                                field-type
-                                minimum-value
-                                minimum-items
-                                equals-collection-size-of
-                                equals-field
-                                equals-sum-of-fields-summary
-                                equals-field-when-value-summary
-                                true-when-zero-field
-                                enum-when-zero-summary
-                                enum-when-nonzero-summary
-                                maximum-value
-                                enum-values
-                                required-p
-                                nullable-p
-                                closed-p)
+                                annotations)
                         (format nil "`~A`" field-name))))
 
 (defun %format-json-field-lines (fields &optional (depth 1))
@@ -312,36 +255,25 @@
                 (when permission-profile
                         (format nil "`~(~A~)`" permission-profile))))
 
+(defun %write-schema-section (stream label schema &optional json-fields-label)
+        (let ((schema-line (%format-schema-summary schema))
+              (json-field-lines (%format-schema-json-field-lines schema)))
+                (when schema-line
+                        (format stream "- ~A: ~A~%" label schema-line))
+                (when json-field-lines
+                        (format stream "- ~A:~%" (or json-fields-label "JSON Fields"))
+                        (dolist (line json-field-lines)
+                                (format stream "~A~%" line)))))
+
 (defun render-tool-reference-markdown ()
         (with-output-to-string (stream)
                 (format stream "## 工具参考~%~%")
                 (dolist (definition (cl-cc.tools:list-tool-definitions))
                         (format stream "### `~A`~%~%" (cl-cc.models:tool-id definition))
                         (format stream "- Summary: ~A~%" (cl-cc.models:tool-summary definition))
-                        (let ((input-schema-line (%format-schema-summary (cl-cc.models:tool-input-schema definition))))
-                                (when input-schema-line
-                                        (format stream "- Input Schema: ~A~%" input-schema-line)))
-                        (let ((input-json-field-lines (%format-schema-json-field-lines (cl-cc.models:tool-input-schema definition))))
-                                (when input-json-field-lines
-                                        (format stream "- Input JSON Fields:~%")
-                                        (dolist (line input-json-field-lines)
-                                                (format stream "~A~%" line))))
-                        (let ((output-schema-line (%format-schema-summary (cl-cc.models:tool-output-schema definition))))
-                                (when output-schema-line
-                                        (format stream "- Output Schema: ~A~%" output-schema-line)))
-                        (let ((output-json-field-lines (%format-schema-json-field-lines (cl-cc.models:tool-output-schema definition))))
-                                (when output-json-field-lines
-                                        (format stream "- Output JSON Fields:~%")
-                                        (dolist (line output-json-field-lines)
-                                                (format stream "~A~%" line))))
-                        (let ((error-output-schema-line (%format-schema-summary (cl-cc.models:tool-error-output-schema definition))))
-                                (when error-output-schema-line
-                                        (format stream "- Error Output Schema: ~A~%" error-output-schema-line)))
-                        (let ((error-output-json-field-lines (%format-schema-json-field-lines (cl-cc.models:tool-error-output-schema definition))))
-                                (when error-output-json-field-lines
-                                        (format stream "- Error JSON Fields:~%")
-                                        (dolist (line error-output-json-field-lines)
-                                                (format stream "~A~%" line))))
+                        (%write-schema-section stream "Input Schema" (cl-cc.models:tool-input-schema definition) "Input JSON Fields")
+                        (%write-schema-section stream "Output Schema" (cl-cc.models:tool-output-schema definition) "Output JSON Fields")
+                        (%write-schema-section stream "Error Output Schema" (cl-cc.models:tool-error-output-schema definition) "Error JSON Fields")
                         (let ((failure-modes-line (%format-tool-failure-modes definition)))
                                 (when failure-modes-line
                                         (format stream "- Failure Modes: ~A~%" failure-modes-line)))
@@ -368,14 +300,7 @@
                         (let ((aliases-line (%format-command-reference-aliases definition)))
                                 (when aliases-line
                                         (format stream "- Aliases: ~A~%" aliases-line)))
-                        (let ((output-schema-line (%format-command-reference-output-schema definition)))
-                                (when output-schema-line
-                                        (format stream "- Output Schema: ~A~%" output-schema-line)))
-                        (let ((json-field-lines (%format-command-reference-json-field-lines definition)))
-                                (when json-field-lines
-                                        (format stream "- JSON Fields:~%")
-                                        (dolist (line json-field-lines)
-                                                (format stream "~A~%" line))))
+                        (%write-schema-section stream "Output Schema" (cl-cc.models:command-output-schema definition) "JSON Fields")
                         (let ((option-lines (cl-cc.core::command-option-help-lines definition)))
                                 (when option-lines
                                         (format stream "- Options:~%")
@@ -388,9 +313,7 @@
         (let ((start (search +command-reference-start-marker+ contents))
               (end (search +command-reference-end-marker+ contents)))
                 (unless (and start end)
-                        (error 'cl-cc.lib:cl-cc-error
-                               :code :documentation-markers-not-found
-                               :message "command reference markers not found in target document"))
+                        (error (%documentation-markers-not-found-error)))
                 (format nil "~A~A~%~A~%~A~A"
                         (subseq contents 0 start)
                         +command-reference-start-marker+
@@ -424,7 +347,7 @@
         (nth-value 0 (%command-reference-sync-state path)))
 
 (defun %make-docs-sync-result (path status check-only updated needs-sync duration-seconds exit-code)
-        (cl-cc.lib:make-result :status (intern (string-upcase status) :keyword)
+        (cl-cc.lib:make-result :status (cl-cc.lib:string-designator-keyword status)
                                :payload (list :path path
                                               :check-only check-only
                                               :updated updated
@@ -445,10 +368,7 @@
               (check-only (cl-cc.core:command-option-value parsed-arguments :check-only nil))
               (output-format (cl-cc.core:command-option-value parsed-arguments :output-format "text")))
                 (let ((started-at (get-internal-real-time)))
-                        (labels ((elapsed-seconds ()
-                                           (/ (- (get-internal-real-time) started-at)
-                                              (float internal-time-units-per-second 1d0))))
-                                (multiple-value-bind (needs-sync updated-contents)
+                        (multiple-value-bind (needs-sync updated-contents)
                                         (%command-reference-sync-state path)
                                         (declare (ignore updated-contents))
                                         (cond
@@ -456,7 +376,7 @@
                                                  (let* ((status (if needs-sync "drift" "in-sync"))
                                                         (exit-code (if needs-sync 1 0))
                                                         (result-object (%make-docs-sync-result path status t nil needs-sync
-                                                                                               (elapsed-seconds)
+                                                                                               (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))
                                                                                                exit-code)))
                                                         (format t "~A~%"
                                                                 (if (string= output-format "json")
@@ -466,7 +386,7 @@
                                                 (needs-sync
                                                  (sync-command-reference-file path)
                                                  (let ((result-object (%make-docs-sync-result path "synced" nil t nil
-                                                                                              (elapsed-seconds)
+                                                                                              (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))
                                                                                               0)))
                                                    (format t "~A~%"
                                                            (if (string= output-format "json")
@@ -475,13 +395,13 @@
                                                  0)
                                                 (t
                                                  (let ((result-object (%make-docs-sync-result path "in-sync" nil nil nil
-                                                                                              (elapsed-seconds)
+                                                                                              (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))
                                                                                               0)))
                                                    (format t "~A~%"
                                                            (if (string= output-format "json")
                                                                (render-docs-sync-result result-object)
                                                                (cl-cc.lib:result-message result-object))))
-                                                 0)))))))
+                                                 0))))))
 
 (defun render-help ()
         (cl-cc.core:ensure-default-commands)

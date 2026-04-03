@@ -1,17 +1,29 @@
 ;;;; src/cli/main.lisp - CL-CC CLI 主入口
 (in-package :cl-cc)
 
+(defun %handle-cli-error (condition)
+  (cl-cc.lib:debug-log "~A" (%cli-error-log-message condition))
+  1)
+
+(defun %handle-unexpected-cli-error (condition)
+  (cl-cc.lib:debug-log "~A" (%cli-unhandled-error-log-message condition))
+  2)
+
+(defun %unknown-command-message (argv)
+  (format nil "Unknown command: ~{~A~^ ~}" argv))
+
+(defun %unknown-command-error (argv)
+  (cl-cc.lib:make-cl-cc-error :unknown-command
+                              (%unknown-command-message argv)))
+
 (defun main (&rest argv)
   "CL-CC CLI 启动入口。参数 argv 为命令行参数列表。"
   (handler-case
       (let ((dispatch-result (cl-cc.core:dispatch-command argv)))
         (when dispatch-result
           (return-from main dispatch-result))
-        (format t "CL-CC CLI 启动成功。~%用法: cl-cc --help~%")
-        0)
+        (error (%unknown-command-error argv)))
     (cl-cc.lib:cl-cc-error (e)
-      (cl-cc.lib:debug-log "[ERROR] ~A: ~A" (cl-cc.lib:error-code e) (cl-cc.lib:error-message e))
-      1)
+      (%handle-cli-error e))
     (error (e)
-      (cl-cc.lib:debug-log "[UNHANDLED ERROR] ~A" e)
-      2)))
+      (%handle-unexpected-cli-error e))))

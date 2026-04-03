@@ -1,8 +1,16 @@
 ;;;; src/session/store.lisp - 会话快照存储抽象
 (in-package :cl-cc.session)
 
+(defun %session-snapshot-not-found-message (path)
+  (format nil "session snapshot not found: ~A" path))
+
+(defun %session-snapshot-not-found-error (path)
+  (cl-cc.lib:make-cl-cc-error :session-not-found
+                              (%session-snapshot-not-found-message path)))
+
 (defun save-session (session path)
   "保存 session-state 到指定路径。"
+  (ensure-directories-exist path)
   (with-open-file (stream path
                           :direction :output
                           :if-exists :supersede
@@ -17,4 +25,4 @@
         (let ((contents (make-string (file-length stream))))
           (read-sequence contents stream)
           (deserialize-session contents)))
-      (error 'cl-cc.lib:cl-cc-error :code :session-not-found :message (format nil "session snapshot not found: ~A" path))))
+      (error (%session-snapshot-not-found-error path))))

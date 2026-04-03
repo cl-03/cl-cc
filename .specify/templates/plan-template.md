@@ -61,7 +61,7 @@ specs/[###-feature]/
 
 ```text
 # [REMOVE IF UNUSED] Option 1: Single Common Lisp project (DEFAULT)
-project.asd
+cl-cc.asd
 src/
 ├── cli/
 ├── core/
@@ -100,7 +100,9 @@ ios/ or android/
 ```
 
 **Structure Decision**: [Document the selected Common Lisp-oriented structure and reference the real
-directories captured above]
+directories captured above. Prefer the canonical ASDF entry `cl-cc.asd`; if a
+compatibility shim such as `project.asd` is kept, note it explicitly instead of
+treating it as the primary entrypoint.]
 
 ## Complexity Tracking
 

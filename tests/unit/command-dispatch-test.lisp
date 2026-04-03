@@ -7,6 +7,8 @@
 
 (test command-key-resolution
   (is (string= (cl-cc.core:command-key-from-argv '("--help")) "help"))
+  (is (string= (cl-cc.core:command-key-from-argv '("chat")) "chat"))
+  (is (string= (cl-cc.core:command-key-from-argv '("c")) "chat"))
   (is (string= (cl-cc.core:command-key-from-argv '("docs" "sync")) "docs sync-reference"))
   (is (string= (cl-cc.core:command-key-from-argv '("run" "--help")) "help"))
   (is (string= (cl-cc.core:command-key-from-argv '("-h")) "help"))
@@ -14,6 +16,8 @@
   (is (string= (cl-cc.core:command-key-from-argv '("s" "start")) "session start"))
   (is (string= (cl-cc.core:command-key-from-argv '("session" "resume" "abc")) "session resume"))
   (is (string= (cl-cc.core:command-key-from-argv '("s" "resume" "abc")) "session resume"))
+  (is (string= (cl-cc.core:command-key-from-argv '("session" "run" "abc")) "session run"))
+  (is (string= (cl-cc.core:command-key-from-argv '("s" "run" "abc")) "session run"))
   (is (string= (cl-cc.core:command-key-from-argv '("run" "--fixture" "test")) "run --fixture"))
   (is (string= (cl-cc.core:command-key-from-argv '("r" "--fixture" "test")) "run --fixture")))
 
@@ -24,9 +28,10 @@
     (is (string= (cl-cc.models:command-summary definition) "显示 CLI 帮助")))
   (let ((output (capture-output (lambda () (cl-cc:main "--help")))))
     (is (search "Usage:" output))
+    (is (search "chat [<session-id-or-path>] [--session-path <session-path>] [--session-id <session-id>] [--tool <tool-id>]" output))
     (is (search "docs sync-reference [<output-path>] [--check] [--output-format <output-format>]" output))
     (is (search "run --fixture <fixture-id>... [--output-format <output-format>]" output))
-    (is (search "session start [--session-id <session-id>] [--history-index <history-index>]" output))
+    (is (search "session start [--session-id <session-id>] [--session-path <session-path>] [--history-index <history-index>]" output))
     (is (search "[default: text]" output))
     (is (search "[requires: --output-format=json]" output))))
 
@@ -210,15 +215,25 @@
     (is (search "fail: [SUCCESS] tool:echo-tool" output))))
 
 (test invalid-arguments-through-registry
+  (is (= (cl-cc:main "unknown-command") 1))
   (is (= (cl-cc:main "run" "--fixture") 1))
   (is (= (cl-cc:main "s" "resume") 1))
+  (is (= (cl-cc:main "s" "run") 1))
+  (is (= (cl-cc:main "chat" "--unknown") 1))
   (is (= (cl-cc:main "session" "start" "--unknown") 1))
   (is (= (cl-cc:main "session" "start" "--output-format" "xml") 1))
   (is (= (cl-cc:main "session" "resume" "resume-user" "--output-format" "xml") 1))
+  (is (= (cl-cc:main "session" "run" "resume-user" "--output-format" "xml") 1))
   (is (= (cl-cc:main "run" "--fixture" "test" "--output-format=xml") 1))
   (is (= (cl-cc:main "run" "--fixture" "test" "-t") 1))
   (is (= (cl-cc:main "run" "--fixture" "test" "--output-format" "text" "--pretty") 1))
   (is (= (cl-cc:main "run" "--fixture" "test" "--output-format" "json" "--pretty" "--compact") 1)))
+
+(test unknown-command-logs-domain-error-to-stderr
+  (multiple-value-bind (exit-code stderr)
+      (invoke-main-capturing-stderr "unknown-command")
+    (is (= exit-code 1))
+    (is (search "[DEBUG] [ERROR] UNKNOWN-COMMAND: Unknown command: unknown-command" stderr))))
 
 (test named-option-through-registry
   (let ((output (capture-output (lambda () (cl-cc:main "session" "start" "--session-id" "named-session")))))
@@ -226,6 +241,16 @@
   (let ((output (capture-output (lambda () (cl-cc:main "session" "start" "-i" "short-session" "--history-index" "3")))))
     (is (search "新会话已创建: short-session" output))
     (is (search "历史索引: 3" output)))
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "named-option-session-start-test.session"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc:main "session" "start" "-i" "saved-session" "--session-path" path)))))
+           (is (search "新会话已创建: saved-session" output))
+           (is (search "快照已保存:" output))
+           (is (probe-file path)))
+      (when (probe-file path)
+        (delete-file path))))
   (let ((output (capture-output (lambda () (cl-cc:main "session" "start" "-i" "json-session" "--history-index" "3" "--output-format" "json")))))
     (is (search "\"status\":\"success\"" output))
     (is (search "\"sessionId\":\"json-session\"" output))
@@ -233,6 +258,16 @@
     (is (search "\"sessionStatus\":\"active\"" output))
     (is (search "\"durationSeconds\":" output))
     (is (search "\"exitCode\":0" output)))
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "named-option-session-start-json-test.session"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc:main "session" "start" "-i" "json-saved-session" "--session-path" path "--output-format" "json")))))
+           (is (search "\"sessionPath\":" output))
+           (is (search "\"saved\":true" output))
+           (is (probe-file path)))
+      (when (probe-file path)
+        (delete-file path))))
   (let ((output (capture-output (lambda () (cl-cc:main "session" "resume" "resume-user")))))
     (is (search "会话已恢复: resume-user" output)))
   (let ((output (capture-output (lambda () (cl-cc:main "session" "resume" "resume-user" "--output-format" "json")))))
@@ -241,22 +276,124 @@
     (is (search "\"historyIndex\":null" output))
     (is (search "\"sessionStatus\":\"active\"" output))
     (is (search "\"durationSeconds\":" output))
-    (is (search "\"exitCode\":0" output))))
+    (is (search "\"exitCode\":0" output)))
+  (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user")))))
+    (is (search "会话已执行: resume-user" output))
+    (is (search "历史索引: 1" output))
+    (is (search "执行状态: success" output))
+    (is (search "执行结果: tool:echo-tool result:resume-user" output)))
+  (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "hello from cli")))))
+    (is (search "会话已执行: resume-user" output))
+    (is (search "输入: hello from cli" output))
+    (is (search "执行结果: tool:echo-tool result:hello from cli" output)))
+  (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "--output-format" "json")))))
+    (is (search "\"status\":\"success\"" output))
+    (is (search "\"sessionId\":\"resume-user\"" output))
+    (is (search "\"historyIndex\":1" output))
+    (is (search "\"sessionStatus\":\"active\"" output))
+    (is (search "\"executionStatus\":\"success\"" output))
+    (is (search "\"result\":\"tool:echo-tool result:resume-user\"" output))
+    (is (search "\"toolResults\":[{\"toolId\":\"echo-tool\"" output))
+    (is (search "\"durationSeconds\":" output))
+    (is (search "\"exitCode\":0" output)))
+  (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "hello from cli" "--output-format" "json")))))
+    (is (search "\"input\":\"hello from cli\"" output))
+    (is (search "\"result\":\"tool:echo-tool result:hello from cli\"" output)))
+  (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "read file README.md" "-t" "echo-tool" "--output-format" "json")))))
+    (is (search "\"selectedTools\":[\"echo-tool\"]" output))
+    (is (search "\"executionPlan\":[{\"tool\":\"echo-tool\",\"input\":\"read file README.md\"}]" output))
+    (is (search "\"result\":\"tool:echo-tool result:read file README.md\"" output)))
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "session-run-save-test.session"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "--session-path" path)))))
+           (is (search "会话已执行: resume-user" output))
+           (is (search "快照已保存:" output))
+           (is (probe-file path)))
+      (when (probe-file path)
+        (delete-file path)))))
 
 (test typed-option-validation-through-registry
   (is (= (cl-cc:main "session" "start" "--history-index" "abc") 1)))
 
+(defun invoke-session-loop-capturing-stderr (session)
+  (let ((stderr nil)
+        (result nil))
+    (setf stderr
+          (with-output-to-string (stream)
+            (let ((*error-output* stream))
+              (setf result (cl-cc.core:session-loop session)))))
+    (values result stderr)))
+
 (test session-loop-summary
   (let* ((session (cl-cc.services:start-session "loop-user"))
-      (summary-1 (cl-cc.core:session-loop session))
+      (summary-1 (cl-cc.core:session-loop session :input "first input"))
       (summary-2 (cl-cc.core:session-loop session)))
     (is (equal (getf summary-1 :session-id) "loop-user"))
     (is (eq (getf summary-1 :status) :completed))
     (is (= (getf summary-1 :history-index) 1))
+    (is (string= (getf summary-1 :input) "first input"))
     (is (string= (getf summary-1 :execution-command) "session-loop"))
+    (is (eq (getf summary-1 :execution-status) :success))
+    (is (string= (getf summary-1 :result) "tool:echo-tool result:first input"))
+    (is (equal (getf summary-1 :selected-tools)
+               '("echo-tool" "failing-tool")))
+    (is (equal (getf summary-1 :execution-plan)
+               '((:tool "echo-tool" :input "first input")
+                 (:tool "failing-tool" :input "first input"))))
+    (is (equal (mapcar (lambda (record) (getf record :tool)) (getf summary-1 :tool-results))
+           '("echo-tool")))
     (is (= (length (getf summary-1 :history-trail)) 2))
     (is (= (cl-cc.models:session-history-index session) 2))
     (is (eq (getf summary-2 :status) :completed))
     (is (= (getf summary-2 :history-index) 2))
+    (is (string= (getf summary-2 :input) "first input"))
+    (is (eq (getf summary-2 :execution-status) :success))
     (is (= (length (getf summary-2 :history-trail)) 3))
     (is (equal (cl-cc.models:session-context-summary session) summary-2))))
+
+(test session-loop-error-log-message-rendering
+  (let ((condition (make-condition 'cl-cc.lib:cl-cc-error
+                                   :code "SESSION-FAIL"
+                                   :message "session failed")))
+    (is (string= (cl-cc.core::%session-error-log-message condition)
+                 "[SESSION ERROR] SESSION-FAIL: session failed"))))
+
+(test session-loop-unhandled-error-log-message-rendering
+  (is (string= (cl-cc.core::%session-unhandled-error-log-message (make-condition 'simple-error :format-control "boom"))
+               "[SESSION UNHANDLED ERROR] boom")))
+
+(test session-loop-logs-expected-errors-and-returns-nil
+  (let ((session (cl-cc.services:start-session "loop-error-user"))
+        (original-history (symbol-function 'cl-cc.core::%session-history-trail)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'cl-cc.core::%session-history-trail)
+                 (lambda (session)
+                   (declare (ignore session))
+                   (error (make-condition 'cl-cc.lib:cl-cc-error
+                                          :code "SESSION-FAIL"
+                                          :message "session failed"))))
+           (multiple-value-bind (result stderr)
+               (invoke-session-loop-capturing-stderr session)
+             (is (null result))
+             (is (search "[DEBUG] [SESSION ERROR] SESSION-FAIL: session failed" stderr))))
+      (setf (symbol-function 'cl-cc.core::%session-history-trail)
+            original-history))))
+
+(test session-loop-logs-unhandled-errors-and-returns-nil
+  (let ((session (cl-cc.services:start-session "loop-unhandled-user"))
+        (original-history (symbol-function 'cl-cc.core::%session-history-trail)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'cl-cc.core::%session-history-trail)
+                 (lambda (session)
+                   (declare (ignore session))
+                   (error "boom")))
+           (multiple-value-bind (result stderr)
+               (invoke-session-loop-capturing-stderr session)
+             (is (null result))
+             (is (search "[DEBUG] [SESSION UNHANDLED ERROR] boom" stderr))))
+      (setf (symbol-function 'cl-cc.core::%session-history-trail)
+            original-history))))

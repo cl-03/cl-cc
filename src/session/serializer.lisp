@@ -1,6 +1,17 @@
 ;;;; src/session/serializer.lisp - 会话序列化
 (in-package :cl-cc.session)
 
+(defun %invalid-session-error ()
+  (cl-cc.lib:make-cl-cc-error :invalid-session
+                              "invalid session snapshot"))
+
+(defun %unsupported-session-version-message (version)
+  (format nil "unsupported session version: ~A" version))
+
+(defun %session-version-mismatch-error (version)
+  (cl-cc.lib:make-cl-cc-error :session-version-mismatch
+                              (%unsupported-session-version-message version)))
+
 (defun serialize-session (session)
   "将 session-state 对象序列化为可读 s-expression 字符串。"
   (with-standard-io-syntax
@@ -21,9 +32,9 @@
              (version (getf data :version))
              (session-id (getf data :session-id)))
         (unless (and (listp data) session-id)
-          (error 'cl-cc.lib:cl-cc-error :code :invalid-session :message "invalid session snapshot"))
+          (error (%invalid-session-error)))
         (unless (string= version "0.1")
-          (error 'cl-cc.lib:cl-cc-error :code :session-version-mismatch :message (format nil "unsupported session version: ~A" version)))
+          (error (%session-version-mismatch-error version)))
         (make-instance 'cl-cc.models:session-state
                        :session-id session-id
                        :created-at (getf data :created-at)
@@ -36,4 +47,4 @@
     (cl-cc.lib:cl-cc-error (e)
       (error e))
     (error ()
-      (error 'cl-cc.lib:cl-cc-error :code :invalid-session :message "invalid session snapshot"))))
+      (error (%invalid-session-error)))))

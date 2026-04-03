@@ -5,6 +5,19 @@
 
 (in-suite session-resume-test)
 
+(test session-resume-message-rendering
+  (let ((session (make-instance 'cl-cc.models:session-state
+                                :session-id "resume-user"
+                                :created-at "restored"
+                                :updated-at "restored"
+                                :history-index nil
+                                :context-summary nil
+                                :permission-snapshot nil
+                                :status :active
+                                :version "0.1")))
+    (is (string= (cl-cc.services::%session-resume-message session)
+                 "会话已恢复: resume-user"))))
+
 (test session-resume-success
   (let* ((path "resume-ok.session")
          (session (cl-cc.services:start-session "resume-user")))
@@ -23,3 +36,13 @@
     (write-line "not-a-session" stream))
   (signals cl-cc.lib:cl-cc-error
     (cl-cc.services:resume-session "resume-bad.session")))
+
+(test session-resume-directory-path-signals-stable-error
+  (handler-case
+      (progn
+        (cl-cc.services:resume-session ".")
+        (fail "expected invalid session directory path error"))
+    (cl-cc.lib:cl-cc-error (condition)
+      (is (eq (cl-cc.lib:error-code condition) :invalid-session-path))
+      (is (string= (cl-cc.lib:error-message condition)
+                   "session snapshot path is a directory: .")))))

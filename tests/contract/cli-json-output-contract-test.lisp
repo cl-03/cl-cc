@@ -6,12 +6,27 @@
 (in-suite cli-json-output-contract-test)
 
 (test session-command-json-output-contract
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "session-command-json-output-contract.session"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (expect-command-json-output-valid
+          "session start"
+          (capture-output (lambda () (cl-cc:handle-session-start "json-session" 2 "json" path))))
+      (when (probe-file path)
+        (delete-file path))))
   (expect-command-json-output-valid
    "session start"
    (capture-output (lambda () (cl-cc:handle-session-start "json-session" 2 "json"))))
   (expect-command-json-output-valid
    "session resume"
-   (capture-output (lambda () (cl-cc:handle-session-resume "resume-user" "json")))))
+    (capture-output (lambda () (cl-cc:handle-session-resume "resume-user" "json"))))
+    (expect-command-json-output-valid
+    "session run"
+    (capture-output (lambda () (cl-cc::handle-session-run "resume-user" "hello contract" "json"))))
+  (expect-command-json-output-valid
+   "session run"
+    (capture-output (lambda () (cl-cc:main "session" "run" "resume-user" "read file README.md" "-t" "echo-tool" "--output-format" "json")))))
 
 (test docs-sync-json-output-contract
   (let ((path (uiop:native-namestring

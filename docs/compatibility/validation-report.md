@@ -149,5 +149,5 @@
 
 ## Full Test Run
 
-- 命令：`sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:load-system '|cl-cc/tests|)" --eval "(cl-cc/tests:run-tests)"`
+- 命令：`sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl-cc)" --quit`
 - 结果：`472` checks passed, `0` failed

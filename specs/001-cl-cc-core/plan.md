@@ -60,7 +60,7 @@ specs/[###-feature]/
 -->
 
 ```text
-project.asd
+cl-cc.asd
 src/
 ├── cli/
 ├── core/
@@ -98,7 +98,7 @@ ios/ or android/
 └── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: Select Option 1 as a single Common Lisp project rooted at `project.asd`. Runtime entrypoints live under `src/cli/`; reusable request, command, and execution abstractions live under `src/core/`; persistent state and recovery logic live under `src/session/`; user-visible tools live under `src/tools/`; data and policy records live under `src/models/` and `src/services/`; regression fixtures and test layers live under `tests/unit/`, `tests/integration/`, and `tests/contract/`.
+**Structure Decision**: Select Option 1 as a single Common Lisp project rooted at the canonical ASDF entry `cl-cc.asd`. Runtime entrypoints live under `src/cli/`; reusable request, command, and execution abstractions live under `src/core/`; persistent state and recovery logic live under `src/session/`; user-visible tools live under `src/tools/`; data and policy records live under `src/models/` and `src/services/`; regression fixtures and test layers live under `tests/unit/`, `tests/integration/`, and `tests/contract/`. `project.asd` is retained only as a compatibility shim for older local commands.
 
 ## Complexity Tracking
 

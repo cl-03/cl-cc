@@ -1,7 +1,10 @@
 ;;;; src/lib/package.lisp
 (defpackage :cl-cc.lib
   (:use :cl :alexandria)
-  (:export :cl-cc-error :error-code :error-message
+  (:export :string-designator-downcase :string-designator-upcase :string-designator-keyword
+           :elapsed-seconds
+           :cl-cc-error :make-cl-cc-error :error-code :error-message
            :result :make-result :result-status :result-payload :result-message
-           :debug-log))
+           :debug-log
+           :parse-json-document :json-null-p))
 (in-package :cl-cc.lib)

@@ -1,0 +1,28 @@
+;;;; tests/unit/lib-text-test.lisp - lib text helper tests
+(in-package :cl-cc/tests)
+
+(def-suite lib-text-test :in cl-cc-suite)
+(in-suite lib-text-test)
+
+(test string-designator-case-helpers-preserve-stable-normalization
+  (is (string= (cl-cc.lib:string-designator-downcase :SESSION-ID)
+               "session-id"))
+  (is (string= (cl-cc.lib:string-designator-downcase 'Delete-File)
+               "delete-file"))
+  (is (string= (cl-cc.lib:string-designator-downcase "MiXeD")
+               "mixed"))
+  (is (string= (cl-cc.lib:string-designator-upcase :permission-denied)
+               "PERMISSION-DENIED"))
+  (is (string= (cl-cc.lib:string-designator-upcase 'fail)
+               "FAIL"))
+  (is (string= (cl-cc.lib:string-designator-upcase "already-up")
+               "ALREADY-UP"))
+    (is (eq (cl-cc.lib:string-designator-keyword :permission-denied)
+      :PERMISSION-DENIED))
+    (is (eq (cl-cc.lib:string-designator-keyword "fixtureCount")
+      :|FIXTURECOUNT|))
+    (is (eq (cl-cc.lib:string-designator-keyword 'status)
+      :STATUS))
+  (is (null (cl-cc.lib:string-designator-downcase nil)))
+    (is (null (cl-cc.lib:string-designator-upcase nil)))
+    (is (null (cl-cc.lib:string-designator-keyword nil))))
