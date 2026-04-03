@@ -156,6 +156,38 @@
          (snippet-end (min (length contents) (+ end +file-edit-preview-radius+))))
     (subseq contents snippet-start snippet-end)))
 
+(defun %file-edit-line-and-column (contents position)
+  (loop with line = 1
+        with column = 1
+        with index = 0
+        while (< index position) do
+          (let ((character (char contents index)))
+            (cond
+              ((char= character #\Return)
+               (incf line)
+               (setf column 1)
+               (when (and (< (1+ index) position)
+                          (< (1+ index) (length contents))
+                          (char= (char contents (1+ index)) #\Newline))
+                 (incf index)))
+              ((char= character #\Newline)
+               (incf line)
+               (setf column 1))
+              (t
+               (incf column))))
+          (incf index)
+        finally (return (values line column))))
+
+(defun %file-edit-position-metadata (contents start end)
+  (multiple-value-bind (start-line start-column)
+      (%file-edit-line-and-column contents start)
+    (multiple-value-bind (end-line end-column)
+        (%file-edit-line-and-column contents end)
+      (list :match-start-line start-line
+            :match-start-column start-column
+            :match-end-line end-line
+            :match-end-column end-column))))
+
 (defun %file-edit-diff-preview (contents updated-contents position old-text new-text)
   (let* ((old-end (+ position (length old-text)))
          (new-end (+ position (length new-text)))
@@ -170,20 +202,21 @@
          (summary (if preview
                       (%file-edit-preview-message path old-text new-text selected-occurrence total-matches)
                       (%file-edit-success-message path selected-occurrence total-matches))))
-    (list :summary summary
-          :path path
-          :preview (not (null preview))
-          :match-count 1
-          :total-matches total-matches
-          :selected-occurrence selected-occurrence
-          :match-start position
-          :match-end old-end
-          :matched-text old-text
-          :replacement-text new-text
-          :before-preview (%file-edit-snippet contents position old-end)
-          :after-preview (%file-edit-snippet updated-contents position new-end)
-          :diff-preview (%file-edit-diff-preview contents updated-contents position old-text new-text)
-          :write-applied (not (null (not preview))))))
+    (append (list :summary summary
+      :path path
+      :preview (not (null preview))
+      :match-count 1
+      :total-matches total-matches
+      :selected-occurrence selected-occurrence
+      :match-start position
+      :match-end old-end)
+    (%file-edit-position-metadata contents position old-end)
+    (list :matched-text old-text
+      :replacement-text new-text
+      :before-preview (%file-edit-snippet contents position old-end)
+      :after-preview (%file-edit-snippet updated-contents position new-end)
+      :diff-preview (%file-edit-diff-preview contents updated-contents position old-text new-text)
+      :write-applied (not (null (not preview)))))))
 
 (defun file-edit-tool (input)
   "精确替换指定文件中的单个文本片段并返回稳定摘要。"

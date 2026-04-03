@@ -74,6 +74,10 @@
                                                  :match-count 1
                                                  :total-matches 1
                                                  :selected-occurrence 1
+                                                 :match-start-line 1
+                                                 :match-start-column 8
+                                                 :match-end-line 1
+                                                 :match-end-column 15
                                                  :match-start 7
                                                  :match-end 14
                                                  :matched-text "preview"
@@ -92,6 +96,10 @@
                :SELECTED-OCCURRENCE 1
                :MATCH-START 7
                :MATCH-END 14
+               :MATCH-START-LINE 1
+               :MATCH-START-COLUMN 8
+               :MATCH-END-LINE 1
+               :MATCH-END-COLUMN 15
                :MATCHED-TEXT "preview"
                :REPLACEMENT-TEXT "value"
                :BEFORE-PREVIEW "before preview after"
