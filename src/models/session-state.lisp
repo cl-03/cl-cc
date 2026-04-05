@@ -7,6 +7,7 @@
    (updated-at :initarg :updated-at :accessor session-updated-at :documentation "最后更新时间")
    (history-index :initarg :history-index :accessor session-history-index :documentation "历史索引")
    (context-summary :initarg :context-summary :accessor session-context-summary :documentation "上下文摘要")
+  (tasks :initarg :tasks :initform nil :accessor session-tasks :documentation "会话已知的后台任务快照")
    (permission-snapshot :initarg :permission-snapshot :accessor session-permission-snapshot :documentation "权限快照")
    (status :initarg :status :accessor session-status :documentation "状态")
    (version :initarg :version :accessor session-version :documentation "状态格式版本")))

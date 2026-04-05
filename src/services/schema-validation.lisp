@@ -347,6 +347,29 @@
     (setf envelope (%append-payload-schema-field envelope :saved payload :saved))
     envelope))
 
+(defun %normalized-session-list-record (record)
+  (let ((normalized (copy-list record)))
+    (when (getf normalized :session-status)
+      (setf (getf normalized :session-status)
+            (%optional-status-json-name (getf normalized :session-status))))
+    normalized))
+
+(defun %session-list-result-envelope (result-object)
+  (let* ((payload (%result-payload result-object))
+         (envelope (list :status (%result-status-name result-object)
+                         :session-directory (getf payload :session-directory)
+                         :used-default-directory (getf payload :used-default-directory)
+                         :session-count (getf payload :session-count)
+                         :duration-seconds (getf payload :duration-seconds)
+                         :exit-code (getf payload :exit-code))))
+    (setf envelope (%append-payload-schema-field envelope
+                                                :sessions
+                                                payload
+                                                :sessions
+                                                (lambda (records)
+                                                  (%normalized-record-collection records #'%normalized-session-list-record))))
+    envelope))
+
 (defun %schema-field-basic-validation-error (value field-path field-type nullable-p enum-values)
   (cond
     ((and (%schema-nullish-p value) nullable-p)
@@ -442,6 +465,8 @@
      (%run-fixture-result-envelope result-object))
     ((string= command-name "docs sync-reference")
      (%docs-sync-result-envelope result-object))
+    ((string= command-name "session list")
+     (%session-list-result-envelope result-object))
     ((or (string= command-name "session start")
          (string= command-name "session resume")
          (string= command-name "session run"))
@@ -649,3 +674,11 @@
 (defun session-run-result-conforms-p (result-object)
   "Return true when a session run result object conforms to the registry schema."
   (command-result-conforms-p "session run" result-object))
+
+(defun session-list-result-schema-errors (result-object)
+  "Return a list of schema conformance errors for a session list result object."
+  (command-result-schema-errors "session list" result-object))
+
+(defun session-list-result-conforms-p (result-object)
+  "Return true when a session list result object conforms to the registry schema."
+  (command-result-conforms-p "session list" result-object))

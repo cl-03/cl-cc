@@ -122,44 +122,114 @@
           (uiop:merge-pathnames* "run-session-result-test.session"
                      (uiop:temporary-directory)))))
         (unwind-protect
-              (let ((cl-cc.lib::*git-command-runner*
-                      (lambda (arguments &key directory)
-                        (declare (ignore directory))
-                        (cond
-                            ((equal arguments '("rev-parse" "--show-toplevel")) "D:/VSCode/cl-cc/cl-cc")
-                          ((equal arguments '("branch" "--show-current")) "main")
-                          ((equal arguments '("status" "--short")) "M src/services/session-service.lisp")
-                          ((equal arguments '("log" "--oneline" "-5")) "abc1234 add git snapshot")
-                          (t nil)))))
-                (let* ((result-object (cl-cc.services:run-session-result "run-user" :input "hello session" :session-path path))
-                       (payload (cl-cc.lib:result-payload result-object)))
-                  (is (eq (cl-cc.lib:result-status result-object) :success))
-                  (is (string= (getf payload :session-id) "run-user"))
-                  (is (= (getf payload :history-index) 1))
-                  (is (eq (getf payload :session-status) :active))
-                  (is (string= (getf payload :input) "hello session"))
-                  (is (eq (getf payload :execution-status) :success))
-                  (is (equal (getf payload :git-root) "D:/VSCode/cl-cc/cl-cc"))
-                  (is (equal (getf payload :git-branch) "main"))
-                  (is (getf payload :git-dirty))
-                  (is (equal (getf payload :git-status-lines)
-                             '("M src/services/session-service.lisp")))
-                  (is (equal (getf payload :git-recent-commits)
-                             '("abc1234 add git snapshot")))
-                  (is (string= (getf payload :result) "tool:echo-tool result:hello session"))
-                  (is (= (length (getf payload :tool-results)) 1))
-                  (is (string= (getf (first (getf payload :tool-results)) :tool) "echo-tool"))
-                  (is (string= (getf payload :session-path) path))
-                  (is (getf payload :saved))
-                  (is (numberp (getf payload :duration-seconds)))
-                  (is (= (getf payload :exit-code) 0))
-                  (is (probe-file path))
-                  (is (search "会话已执行: run-user" (cl-cc.lib:result-message result-object)))
-                  (is (search "输入: hello session" (cl-cc.lib:result-message result-object)))
-                  (is (search "执行状态: success" (cl-cc.lib:result-message result-object)))
-                  (is (search "执行结果: tool:echo-tool result:hello session" (cl-cc.lib:result-message result-object)))))
+            (let ((cl-cc.lib::*git-command-runner*
+                    (lambda (arguments &key directory)
+                      (declare (ignore directory))
+                      (cond
+                        ((equal arguments '("rev-parse" "--show-toplevel")) "D:/VSCode/cl-cc/cl-cc")
+                        ((equal arguments '("branch" "--show-current")) "main")
+                        ((equal arguments '("status" "--short")) "M src/services/session-service.lisp")
+                        ((equal arguments '("log" "--oneline" "-5")) "abc1234 add git snapshot")
+                        (t nil)))))
+              (clrhash cl-cc.tools::*shell-background-task-registry*)
+              (let* ((result-object (cl-cc.services:run-session-result "run-user" :input "hello session" :session-path path))
+                     (payload (cl-cc.lib:result-payload result-object)))
+                (is (eq (cl-cc.lib:result-status result-object) :success))
+                (is (string= (getf payload :session-id) "run-user"))
+                (is (= (getf payload :history-index) 1))
+                (is (eq (getf payload :session-status) :active))
+                (is (string= (getf payload :input) "hello session"))
+                (is (eq (getf payload :execution-status) :success))
+                (is (equal (getf payload :git-root) "D:/VSCode/cl-cc/cl-cc"))
+                (is (equal (getf payload :git-branch) "main"))
+                (is (getf payload :git-dirty))
+                (is (equal (getf payload :git-status-lines)
+                           '("M src/services/session-service.lisp")))
+                (is (equal (getf payload :git-recent-commits)
+                           '("abc1234 add git snapshot")))
+                (is (string= (getf payload :result) "tool:echo-tool result:hello session"))
+                (is (= (length (getf payload :tool-results)) 1))
+                (is (eq (getf payload :tasks :missing) :missing))
+                (is (string= (getf (first (getf payload :tool-results)) :tool) "echo-tool"))
+                (is (string= (getf payload :session-path) path))
+                (is (getf payload :saved))
+                (is (numberp (getf payload :duration-seconds)))
+                (is (= (getf payload :exit-code) 0))
+                (is (probe-file path))
+                (is (search "会话已执行: run-user" (cl-cc.lib:result-message result-object)))
+                (is (search "输入: hello session" (cl-cc.lib:result-message result-object)))
+                (is (search "执行状态: success" (cl-cc.lib:result-message result-object)))
+                (is (search "执行结果: tool:echo-tool result:hello session" (cl-cc.lib:result-message result-object))))
+              (clrhash cl-cc.tools::*shell-background-task-registry*))
        (when (probe-file path)
          (delete-file path)))))
+
+(test run-session-result-includes-background-task-snapshots-when-present
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('session-task-snapshot')"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (let* ((result-object (cl-cc.services:run-session-result "task-session" :input "hello task snapshot"))
+                (payload (cl-cc.lib:result-payload result-object))
+                (tasks (getf payload :tasks))
+                (task (find task-id tasks :key (lambda (entry) (getf entry :task-id)) :test #'string=)))
+           (is (eq (cl-cc.lib:result-status result-object) :success))
+           (is (not (null tasks)))
+           (is (not (null task)))
+           (is (string= (getf task :task-id) task-id))
+           (is (string= (getf task :type) "shell"))
+           (is (string= (getf task :status) "running"))
+           (is (getf task :running))
+           (is (string= (getf task :output-path) output-path)))
+      (when task-id
+        (ignore-errors (cl-cc.tools:shell-task-tool (list :task-id task-id :action :stop)))
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test list-sessions-result-preserves-session-directory-and-metadata
+  (let* ((directory (uiop:ensure-directory-pathname
+                     (uiop:merge-pathnames* "session-service-list-test/"
+                                            (uiop:temporary-directory))))
+         (session-path (uiop:native-namestring (merge-pathnames "service.session" directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory)
+           (is (cl-cc.session:save-session
+                (make-instance 'cl-cc.models:session-state
+                               :session-id "service-session"
+                               :created-at "2026-04-05T02:00:00Z"
+                               :updated-at "2026-04-05T02:05:00Z"
+                               :history-index 4
+                               :context-summary '(:input "service input" :result "service result")
+                               :tasks '((:task-id "shell-task-99"))
+                               :permission-snapshot session-path
+                               :status :active
+                               :version "0.1")
+                session-path))
+           (let* ((result-object (cl-cc.services:list-sessions-result :session-dir (uiop:native-namestring directory)))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (session (first (getf payload :sessions))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (string= (getf payload :session-directory)
+                          (uiop:native-namestring directory)))
+             (is (not (getf payload :used-default-directory)))
+             (is (= (getf payload :session-count) 1))
+             (is (string= (getf session :session-id) "service-session"))
+             (is (= (getf session :history-index) 4))
+             (is (= (getf session :task-count) 1))
+             (is (string= (getf session :last-input) "service input"))
+             (is (string= (getf session :last-result) "service result"))
+             (is (numberp (getf payload :duration-seconds)))
+             (is (= (getf payload :exit-code) 0))
+             (is (search "会话数量: 1" (cl-cc.lib:result-message result-object)))
+             (is (search "service-session" (cl-cc.lib:result-message result-object)))))
+      (when (probe-file directory)
+        (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore)))))
 
 (test run-session-result-can-read-file-content-via-file-read-tool
   (let ((path (uiop:native-namestring

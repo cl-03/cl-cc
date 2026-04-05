@@ -33,6 +33,30 @@
                                      :message "saved")))
     (expect-command-schema-valid "session start" session-start-saved-result)
     (is (cl-cc.services:session-start-result-conforms-p session-start-saved-result)))
+  (let* ((directory (uiop:ensure-directory-pathname
+                     (uiop:merge-pathnames* "result-schema-session-list-test/"
+                                            (uiop:temporary-directory))))
+         (path (uiop:native-namestring (merge-pathnames "schema.session" directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory)
+           (is (cl-cc.session:save-session
+                (make-instance 'cl-cc.models:session-state
+                               :session-id "schema-listed"
+                               :created-at "2026-04-05T06:00:00Z"
+                               :updated-at "2026-04-05T06:05:00Z"
+                               :history-index 6
+                               :context-summary '(:input "schema list input" :result "schema list result")
+                               :tasks '((:task-id "shell-task-15"))
+                               :permission-snapshot path
+                               :status :active
+                               :version "0.1")
+                path))
+           (let ((session-list-result (cl-cc.services:list-sessions-result :session-dir (uiop:native-namestring directory))))
+             (expect-command-schema-valid "session list" session-list-result)
+             (is (cl-cc.services:session-list-result-conforms-p session-list-result))))
+      (when (probe-file directory)
+        (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore))))
   (let ((session-resume-result (cl-cc.services:resume-session-result "schema-session")))
     (expect-command-schema-valid "session resume" session-resume-result)
     (is (numberp (getf (cl-cc.lib:result-payload session-resume-result) :duration-seconds)))
@@ -152,6 +176,18 @@
     (expect-command-schema-error-containing "session start"
                                             invalid-session-type-result
                                             "payload.historyIndex: expected value of type INTEGER"))
+  (let ((invalid-session-list-type-result (cl-cc.lib:make-result
+                                           :status :success
+                                           :payload (list :session-directory "tmp/sessions"
+                                                          :used-default-directory nil
+                                                          :session-count "1"
+                                                          :sessions nil
+                                                          :duration-seconds 0.01d0
+                                                          :exit-code 0)
+                                           :message "invalid")))
+    (expect-command-schema-error-containing "session list"
+                                            invalid-session-list-type-result
+                                            "payload.sessionCount: expected value of type INTEGER"))
   (let ((invalid-session-path-type-result (cl-cc.lib:make-result
                                            :status :success
                                            :payload (list :session-id "schema-session"

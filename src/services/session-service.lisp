@@ -16,6 +16,7 @@
                    :updated-at "now"
                    :history-index history-index
                    :context-summary nil
+                   :tasks nil
                    :permission-snapshot nil
                    :status :active
                    :version "0.1")))
@@ -37,17 +38,21 @@
         (format stream "~%快照已保存: ~A" session-path)))))
 
 (defun %make-session-start-result (session duration-seconds)
-  (let ((history-index (cl-cc.models:session-history-index session))
-        (session-path (cl-cc.models:session-permission-snapshot session)))
+  (let* ((history-index (cl-cc.models:session-history-index session))
+         (tasks (cl-cc.models:session-tasks session))
+         (session-path (cl-cc.models:session-permission-snapshot session))
+         (payload (list :session-id (cl-cc.models:session-id session)
+                        :history-index history-index
+                        :session-status (cl-cc.models:session-status session)
+                        :session-path session-path
+                        :saved (not (null session-path))
+                        :duration-seconds duration-seconds
+                        :exit-code 0)))
+    (when tasks
+      (setf payload (append payload (list :tasks tasks))))
     (cl-cc.lib:make-result
      :status :success
-     :payload (list :session-id (cl-cc.models:session-id session)
-                    :history-index history-index
-                    :session-status (cl-cc.models:session-status session)
-                    :session-path session-path
-                    :saved (not (null session-path))
-                    :duration-seconds duration-seconds
-                    :exit-code 0)
+     :payload payload
      :message (%session-start-message session))))
 
 (defun start-session-result (&rest arguments)
@@ -60,6 +65,56 @@
       (cl-cc.session:save-session session session-path))
     (%make-session-start-result session
                                 (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time)))))
+
+(defun list-sessions (&key session-dir)
+  "返回指定目录下可恢复的 session snapshot 元数据列表与目录信息。"
+  (multiple-value-bind (sessions resolved-directory used-default-directory)
+      (cl-cc.session:list-session-snapshots session-dir)
+    (values sessions resolved-directory used-default-directory)))
+
+(defun %session-list-history-index-display (history-index)
+  (if history-index
+      (format nil "~D" history-index)
+      "null"))
+
+(defun %session-list-message (session-directory used-default-directory sessions)
+  (with-output-to-string (stream)
+    (format stream "会话目录: ~A" session-directory)
+    (format stream "~%使用默认目录: ~A" (if used-default-directory "是" "否"))
+    (format stream "~%会话数量: ~D" (length sessions))
+    (dolist (session sessions)
+      (format stream
+              "~%- ~A [~A] history=~A tasks=~D"
+              (getf session :session-id)
+              (cl-cc.lib:string-designator-downcase (getf session :session-status))
+              (%session-list-history-index-display (getf session :history-index))
+              (getf session :task-count 0))
+      (format stream "~%  路径: ~A" (getf session :session-path))
+      (when (getf session :updated-at)
+        (format stream "~%  快照更新时间: ~A" (getf session :updated-at)))
+      (when (getf session :last-input)
+        (format stream "~%  最近输入: ~A" (getf session :last-input))))))
+
+(defun %make-session-list-result (sessions session-directory used-default-directory duration-seconds)
+  (cl-cc.lib:make-result
+   :status :success
+   :payload (list :session-directory session-directory
+                  :used-default-directory used-default-directory
+                  :session-count (length sessions)
+                  :sessions sessions
+                  :duration-seconds duration-seconds
+                  :exit-code 0)
+   :message (%session-list-message session-directory used-default-directory sessions)))
+
+(defun list-sessions-result (&key session-dir)
+  "返回结构化 session list 结果对象。"
+  (let ((started-at (get-internal-real-time)))
+    (multiple-value-bind (sessions resolved-directory used-default-directory)
+        (list-sessions :session-dir session-dir)
+      (%make-session-list-result sessions
+                                 resolved-directory
+                                 used-default-directory
+                                 (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))))))
 
 (defun %session-snapshot-directory-message (path)
   (format nil "session snapshot path is a directory: ~A" path))
@@ -91,6 +146,7 @@
                     :updated-at "restored"
                     :history-index nil
                     :context-summary nil
+                    :tasks nil
                     :permission-snapshot nil
                     :status :active
                     :version "0.1"))))
@@ -99,14 +155,18 @@
   (format nil "会话已恢复: ~A" (cl-cc.models:session-id session)))
 
 (defun %make-session-resume-result (session duration-seconds)
+  (let* ((tasks (cl-cc.models:session-tasks session))
+         (payload (list :session-id (cl-cc.models:session-id session)
+                        :history-index (cl-cc.models:session-history-index session)
+                        :session-status (cl-cc.models:session-status session)
+                        :duration-seconds duration-seconds
+                        :exit-code 0)))
+    (when tasks
+      (setf payload (append payload (list :tasks tasks))))
   (cl-cc.lib:make-result
    :status :success
-   :payload (list :session-id (cl-cc.models:session-id session)
-                  :history-index (cl-cc.models:session-history-index session)
-                  :session-status (cl-cc.models:session-status session)
-                  :duration-seconds duration-seconds
-                  :exit-code 0)
-   :message (%session-resume-message session)))
+   :payload payload
+   :message (%session-resume-message session))))
 
 (defun resume-session-result (session-id)
   "恢复会话并返回结构化结果对象。"
@@ -174,6 +234,14 @@
 (defun %session-run-git-recent-commits (session)
   (getf (%session-run-git-context session) :recent-commits))
 
+(defun %session-run-tasks (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (cond
+      ((and (listp summary) (getf summary :tasks))
+       (getf summary :tasks))
+      (t
+       (cl-cc.models:session-tasks session)))))
+
 (defun %session-run-exit-code (session)
   (if (eq (%session-run-execution-status session) :success)
       0
@@ -199,38 +267,42 @@
         (format stream "~%快照已保存: ~A" session-path)))))
 
 (defun %make-session-run-result (session duration-seconds)
-  (let ((session-path (cl-cc.models:session-permission-snapshot session))
-        (input (%session-run-input session))
-        (execution-status (%session-run-execution-status session))
-  (git-root (%session-run-git-root session))
-  (git-branch (%session-run-git-branch session))
-  (git-dirty (%session-run-git-dirty session))
-  (git-status-lines (%session-run-git-status-lines session))
-  (git-recent-commits (%session-run-git-recent-commits session))
+  (let* ((session-path (cl-cc.models:session-permission-snapshot session))
+         (input (%session-run-input session))
+         (execution-status (%session-run-execution-status session))
+      (tasks (%session-run-tasks session))
+      (git-root (%session-run-git-root session))
+      (git-branch (%session-run-git-branch session))
+      (git-dirty (%session-run-git-dirty session))
+      (git-status-lines (%session-run-git-status-lines session))
+      (git-recent-commits (%session-run-git-recent-commits session))
         (result (%session-run-result-summary session))
         (tool-results (%session-run-tool-results session))
         (selected-tools (%session-run-selected-tools session))
-        (execution-plan (%session-run-execution-plan session)))
+        (execution-plan (%session-run-execution-plan session))
+         (payload (list :session-id (cl-cc.models:session-id session)
+                        :history-index (cl-cc.models:session-history-index session)
+                        :session-status (cl-cc.models:session-status session)
+                        :input input
+                        :execution-status execution-status
+                        :selected-tools selected-tools
+                        :execution-plan execution-plan
+                        :git-root git-root
+                        :git-branch git-branch
+                        :git-dirty git-dirty
+                        :git-status-lines git-status-lines
+                        :git-recent-commits git-recent-commits
+                        :result result
+                        :tool-results tool-results
+                        :session-path session-path
+                        :saved (not (null session-path))
+                        :duration-seconds duration-seconds
+                        :exit-code (%session-run-exit-code session))))
+    (when tasks
+      (setf payload (append payload (list :tasks tasks))))
     (cl-cc.lib:make-result
      :status :success
-     :payload (list :session-id (cl-cc.models:session-id session)
-                    :history-index (cl-cc.models:session-history-index session)
-                    :session-status (cl-cc.models:session-status session)
-                    :input input
-                    :execution-status execution-status
-                    :selected-tools selected-tools
-                    :execution-plan execution-plan
-                    :git-root git-root
-                    :git-branch git-branch
-                    :git-dirty git-dirty
-                    :git-status-lines git-status-lines
-                    :git-recent-commits git-recent-commits
-                    :result result
-                    :tool-results tool-results
-                    :session-path session-path
-                    :saved (not (null session-path))
-                    :duration-seconds duration-seconds
-                    :exit-code (%session-run-exit-code session))
+     :payload payload
      :message (%session-run-message session))))
 
 (defun run-session (session-id-or-path &key session-path input tool-ids)

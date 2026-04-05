@@ -3,7 +3,7 @@
   (:use :cl)
   (:export :main :parse-argv :print-help :render-help :render-command-reference-markdown
            :sync-command-reference-file :command-reference-file-needs-sync-p
-           :handle-session-start :handle-session-resume :handle-session-run :handle-chat :handle-run-fixture
+           :handle-session-start :handle-session-list :handle-session-resume :handle-session-run :handle-chat :handle-run-fixture
            :schema-field))
 (in-package :cl-cc)
 

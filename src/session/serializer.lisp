@@ -12,6 +12,12 @@
   (cl-cc.lib:make-cl-cc-error :session-version-mismatch
                               (%unsupported-session-version-message version)))
 
+(defun %normalized-serialized-session-tasks (value)
+  (cond
+    ((null value) nil)
+    ((listp value) value)
+    (t (error (%invalid-session-error)))))
+
 (defun serialize-session (session)
   "将 session-state 对象序列化为可读 s-expression 字符串。"
   (with-standard-io-syntax
@@ -22,6 +28,7 @@
            :updated-at (cl-cc.models:session-updated-at session)
            :history-index (cl-cc.models:session-history-index session)
            :context-summary (cl-cc.models:session-context-summary session)
+           :tasks (cl-cc.models:session-tasks session)
            :permission-snapshot (cl-cc.models:session-permission-snapshot session)
            :status (cl-cc.models:session-status session)))))
 
@@ -41,6 +48,7 @@
                        :updated-at (getf data :updated-at)
                        :history-index (getf data :history-index)
                        :context-summary (getf data :context-summary)
+                       :tasks (%normalized-serialized-session-tasks (getf data :tasks))
                        :permission-snapshot (getf data :permission-snapshot)
                        :status (getf data :status)
                        :version version))

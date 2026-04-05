@@ -81,6 +81,7 @@
                (:file "src/cli/result-rendering")
                (:file "src/cli/help-command")
                (:file "src/cli/session-command")
+               (:file "src/cli/session-list-command")
                (:file "src/cli/session-resume-command")
                (:file "src/cli/session-run-command")
                (:file "src/cli/chat-command")

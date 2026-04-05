@@ -268,6 +268,7 @@
   (let* ((payload (cl-cc.lib:result-payload result-object))
          (status (cl-cc.lib:result-status result-object))
          (session-status (getf payload :session-status))
+      (tasks (getf payload :tasks :missing))
          (input (getf payload :input :missing))
          (execution-status (getf payload :execution-status :missing))
          (selected-tools (getf payload :selected-tools :missing))
@@ -289,6 +290,10 @@
                                         (%cli-json-number-or-null (getf payload :history-index)))
                        (%cli-json-field "sessionStatus"
                                         (%cli-json-string-or-null (and session-status (%cli-result-status-name session-status)))))))
+    (when (not (eq tasks :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "tasks"
+                                                  (%cli-json-value tasks))))))
     (when (not (eq input :missing))
       (setf fields (append fields
                            (list (%cli-json-field "input"
@@ -350,6 +355,58 @@
                                                 (format nil "~D" (getf payload :exit-code 0))))))
     fields))
 
+    (defun %cli-session-list-entry-json-fields (entry)
+      (%cli-render-json-fields
+       (list (list "sessionId"
+           (%cli-json-string-or-null (getf entry :session-id)))
+         (list "sessionPath"
+           (%cli-json-string-or-null (getf entry :session-path)))
+         (list "createdAt"
+           (%cli-json-string-or-null (getf entry :created-at)))
+         (list "updatedAt"
+           (%cli-json-string-or-null (getf entry :updated-at)))
+         (list "historyIndex"
+           (%cli-json-number-or-null (getf entry :history-index)))
+         (list "sessionStatus"
+           (%cli-json-string-or-null (and (getf entry :session-status)
+                      (%cli-result-status-name (getf entry :session-status)))))
+         (list "taskCount"
+           (%cli-json-number (getf entry :task-count 0)))
+         (list "lastInput"
+           (%cli-json-string-or-null (getf entry :last-input)))
+         (list "lastResult"
+           (%cli-json-string-or-null (getf entry :last-result)))
+         (list "fileSizeBytes"
+           (%cli-json-number-or-null (getf entry :file-size-bytes)))
+         (list "fileUpdatedAt"
+           (%cli-json-string-or-null (getf entry :file-updated-at)))
+         (list "version"
+           (%cli-json-string-or-null (getf entry :version))))))
+
+    (defun %cli-render-session-list-entry-json (entry)
+      (%cli-render-json-object (%cli-session-list-entry-json-fields entry)))
+
+    (defun %cli-session-list-json-fields (result-object)
+      (let* ((payload (cl-cc.lib:result-payload result-object))
+         (status (cl-cc.lib:result-status result-object)))
+        (%cli-render-json-fields
+         (list (list "status"
+             (%cli-json-string-or-null (%cli-result-status-name status)))
+           (list "sessionDirectory"
+             (%cli-json-string-or-null (getf payload :session-directory)))
+           (list "usedDefaultDirectory"
+             (%cli-json-boolean (getf payload :used-default-directory)))
+           (list "sessionCount"
+             (%cli-json-number (getf payload :session-count 0)))
+           (list "sessions"
+             (%cli-render-json-array
+          (mapcar #'%cli-render-session-list-entry-json
+              (getf payload :sessions))))
+           (list "durationSeconds"
+             (%cli-json-number (getf payload :duration-seconds 0d0)))
+           (list "exitCode"
+             (format nil "~D" (getf payload :exit-code 0)))))))
+
 (defun render-run-fixture-result (result-object &key pretty-json)
   (let* ((payload (cl-cc.lib:result-payload result-object))
          (status-counts (getf payload :status-counts))
@@ -371,6 +428,11 @@
 
 (defun render-docs-sync-result (result-object)
   (%cli-render-json-object (%cli-docs-sync-json-fields result-object)))
+
+(defun render-session-list-result (result-object &key output-format)
+  (if (string= (or output-format "text") "json")
+      (%cli-render-json-object (%cli-session-list-json-fields result-object))
+      (cl-cc.lib:result-message result-object)))
 
 (defun render-session-command-result (result-object &key output-format)
   (if (string= (or output-format "text") "json")
