@@ -41,13 +41,14 @@
                           :status :running
                           :results nil))
 
-(defun %session-loop-summary (session next-history-index resolved-input context result tool-ids execution-plan previous-history)
+(defun %session-loop-summary (session next-history-index resolved-input context result tool-ids execution-plan previous-history git-context)
   (let* ((summary (list :session-id (cl-cc.models:session-id session)
                         :status :completed
                         :history-index next-history-index
                         :input resolved-input
                         :selected-tools tool-ids
                         :execution-plan execution-plan
+                        :git-context git-context
                         :result result
                         :tool-results (execution-context-results context)
                         :execution-command (execution-context-command context)
@@ -64,17 +65,18 @@
       (let* ((previous-history (%session-history-trail session))
              (next-history-index (1+ (or (cl-cc.models:session-history-index session) 0)))
              (resolved-input (%session-loop-input session input))
-       (plan (cl-cc.services:plan-session-execution resolved-input :tool-ids-override tool-ids-override))
+             (git-context (cl-cc.lib:capture-git-context))
+             (plan (cl-cc.services:plan-session-execution resolved-input :tool-ids-override tool-ids-override))
          (tool-ids (getf plan :tool-ids))
          (tool-inputs (getf plan :tool-inputs))
-     (context (%session-loop-execution-context session resolved-input
-                          tool-inputs
-                          approval-mode
-                          approval-callback
-                          halt-on-denied))
+             (context (%session-loop-execution-context session resolved-input
+                                                       tool-inputs
+                                                       approval-mode
+                                                       approval-callback
+                                                       halt-on-denied))
              (result (apply #'run-execution-cycle context tool-ids))
-         (summary (%session-loop-summary session next-history-index resolved-input context result tool-ids
-                         (getf plan :steps) previous-history)))
+             (summary (%session-loop-summary session next-history-index resolved-input context result tool-ids
+                                             (getf plan :steps) previous-history git-context)))
         (setf (execution-context-output context) summary)
         (setf (cl-cc.models:session-history-index session) next-history-index)
         (setf (cl-cc.models:session-context-summary session) summary)

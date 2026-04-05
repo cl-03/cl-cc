@@ -81,17 +81,31 @@
     (is (search "\"historyIndex\":null" output))))
 
 (test session-run-json-output
-  (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user" "hello json" "json")))))
-    (is (search "\"status\":\"success\"" output))
-    (is (search "\"sessionId\":\"resume-user\"" output))
-    (is (search "\"input\":\"hello json\"" output))
-    (is (search "\"executionStatus\":\"success\"" output))
-    (is (search "\"selectedTools\":[\"echo-tool\",\"failing-tool\"]" output))
-    (is (search "\"executionPlan\":[{\"tool\":\"echo-tool\",\"input\":\"hello json\"},{\"tool\":\"failing-tool\",\"input\":\"hello json\"}]" output))
-    (is (search "\"result\":\"tool:echo-tool result:hello json\"" output))
-    (is (search "\"toolResults\":[{\"toolId\":\"echo-tool\"" output))
-    (is (search "\"durationSeconds\":" output))
-    (is (search "\"historyIndex\":1" output))))
+  (let ((cl-cc.lib::*git-command-runner*
+          (lambda (arguments &key directory)
+            (declare (ignore directory))
+            (cond
+                ((equal arguments '("rev-parse" "--show-toplevel")) "D:/VSCode/cl-cc/cl-cc")
+              ((equal arguments '("branch" "--show-current")) "main")
+              ((equal arguments '("status" "--short")) "M src/core/session-loop.lisp")
+              ((equal arguments '("log" "--oneline" "-5")) "abc1234 add git context")
+              (t nil)))))
+    (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user" "hello json" "json")))))
+      (is (search "\"status\":\"success\"" output))
+      (is (search "\"sessionId\":\"resume-user\"" output))
+      (is (search "\"input\":\"hello json\"" output))
+      (is (search "\"executionStatus\":\"success\"" output))
+      (is (search "\"selectedTools\":[\"echo-tool\",\"failing-tool\"]" output))
+      (is (search "\"executionPlan\":[{\"tool\":\"echo-tool\",\"input\":\"hello json\"},{\"tool\":\"failing-tool\",\"input\":\"hello json\"}]" output))
+      (is (search "\"gitRoot\":\"D:/VSCode/cl-cc/cl-cc\"" output))
+      (is (search "\"gitBranch\":\"main\"" output))
+      (is (search "\"gitDirty\":true" output))
+      (is (search "\"gitStatusLines\":[\"M src/core/session-loop.lisp\"]" output))
+      (is (search "\"gitRecentCommits\":[\"abc1234 add git context\"]" output))
+      (is (search "\"result\":\"tool:echo-tool result:hello json\"" output))
+      (is (search "\"toolResults\":[{\"toolId\":\"echo-tool\"" output))
+      (is (search "\"durationSeconds\":" output))
+      (is (search "\"historyIndex\":1" output)))))
 
 (test session-run-json-output-can-render-file-read-tool-result
   (let ((path (uiop:native-namestring
@@ -194,6 +208,422 @@
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
 
+(test session-run-json-output-can-render-shell-tool-result
+  (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                     "run shell [Console]::Out.Write('json-shell-ok')"
+                                                                     "json")))))
+    (is (search "\"status\":\"success\"" output))
+    (is (search "\"executionStatus\":\"success\"" output))
+    (is (search "\"selectedTools\":[\"shell-tool\",\"echo-tool\",\"failing-tool\"]" output))
+    (is (search "\"toolResults\":[{\"toolId\":\"shell-tool\"" output))
+    (is (search "\"background\":false" output))
+    (is (search "\"stdout\":\"json-shell-ok\"" output))
+    (is (search "\"stderr\":\"\"" output))
+    (is (search "\"exitCode\":0" output))
+    (is (search "\"timedOut\":false" output))))
+
+(test session-run-json-output-can-render-background-shell-tool-result
+  (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                     "background shell [Console]::Out.Write('json-shell-bg-ok')"
+                                                                     "json")))))
+    (is (search "\"status\":\"success\"" output))
+    (is (search "\"executionStatus\":\"success\"" output))
+    (is (search "\"toolResults\":[{\"toolId\":\"shell-tool\"" output))
+    (is (search "\"background\":true" output))
+    (is (search "\"backgroundTaskId\":\"shell-task-" output))
+    (is (search "\"outputPath\":" output))
+    (is (search "\"stdout\":null" output))
+    (is (search "\"stderr\":null" output))
+    (is (search "\"exitCode\":null" output))
+    (is (search "\"timedOut\":false" output))))
+
+(test session-run-json-output-can-render-shell-task-list-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (running-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-list-running')"
+                                                       :directory directory
+                                                       :background t)))
+         (completed-result (cl-cc.tools:shell-tool (list :command "[Console]::Out.Write('json-shell-task-list-completed')"
+                                                         :directory directory
+                                                         :background t)))
+         (interrupted-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-list-interrupt')"
+                                                           :directory directory
+                                                           :background t)))
+         (running-task-id (getf running-result :background-task-id))
+         (completed-task-id (getf completed-result :background-task-id))
+         (interrupted-task-id (getf interrupted-result :background-task-id))
+         (running-output-path (getf running-result :output-path))
+         (completed-output-path (getf completed-result :output-path))
+         (interrupted-output-path (getf interrupted-result :output-path)))
+    (unwind-protect
+         (progn
+           (sleep 0.4)
+           (cl-cc.tools:shell-task-tool (list :task-id interrupted-task-id :action :interrupt))
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                              "shell task list"
+                                                                              "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"executionStatus\":\"success\"" output))
+             (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-list-tool\"" output))
+             (is (search "\"statusFilter\":\"all\"" output))
+             (is (search "\"taskIdPrefixFilter\":null" output))
+             (is (search "\"directoryContainsFilter\":null" output))
+             (is (search "\"terminationReasonFilter\":null" output))
+             (is (search "\"totalCount\":" output))
+             (is (search "\"runningCount\":" output))
+             (is (search "\"completedCount\":" output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) output))
+             (is (search "\"stallDetected\":false" output))
+             (is (search "\"stallDetectedAt\":null" output))
+             (is (search "\"stallPromptLine\":null" output))
+             (is (search "\"terminationReason\":\"exit\"" output))
+             (is (search "\"terminationReason\":\"interrupt\"" output))
+             (is (search "\"endedAt\":" output))
+             (let ((filtered-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                           (format nil "shell task list :: status=running :: task=~A" running-task-id)
+                                                                                           "json")))))
+               (is (search "\"statusFilter\":\"running\"" filtered-output))
+               (is (search (format nil "\"taskIdPrefixFilter\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-output))
+               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) filtered-output)))
+               (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" filtered-output)))
+             (let ((termination-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                              "shell task list :: termination=interrupt"
+                                                                                              "json")))))
+               (is (search "\"terminationReasonFilter\":\"interrupt\"" termination-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) termination-output))
+               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) termination-output))))))
+      (when running-task-id
+        (remhash running-task-id cl-cc.tools::*shell-background-task-registry*))
+      (when completed-task-id
+        (remhash completed-task-id cl-cc.tools::*shell-background-task-registry*))
+      (when interrupted-task-id
+        (remhash interrupted-task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and running-output-path (probe-file running-output-path))
+        (ignore-errors (delete-file running-output-path)))
+      (when (and completed-output-path (probe-file completed-output-path))
+        (ignore-errors (delete-file completed-output-path)))
+      (when (and interrupted-output-path (probe-file interrupted-output-path))
+        (ignore-errors (delete-file interrupted-output-path))))))
+
+(test session-run-json-output-can-render-shell-task-cleanup-tool-result
+  (let ((cl-cc.tools::*shell-background-task-registry* (make-hash-table :test 'equal)))
+    (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+           (running-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-cleanup-running')"
+                                                         :directory directory
+                                                         :background t)))
+           (completed-result (cl-cc.tools:shell-tool (list :command "[Console]::Out.Write('json-shell-task-cleanup-completed')"
+                                                           :directory directory
+                                                           :background t)))
+           (interrupted-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-cleanup-interrupted')"
+                                                             :directory directory
+                                                             :background t)))
+           (running-task-id (getf running-result :background-task-id))
+           (completed-task-id (getf completed-result :background-task-id))
+           (interrupted-task-id (getf interrupted-result :background-task-id))
+           (running-output-path (getf running-result :output-path))
+           (completed-output-path (getf completed-result :output-path))
+           (interrupted-output-path (getf interrupted-result :output-path))
+           (fresh-interrupted-task-id nil)
+           (fresh-interrupted-output-path nil))
+      (unwind-protect
+           (progn
+             (sleep 0.4)
+             (cl-cc.tools:shell-task-tool (list :task-id interrupted-task-id :action :interrupt))
+             (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                "cleanup shell tasks"
+                                                                                "json")))))
+               (is (search "\"status\":\"success\"" output))
+               (is (search "\"executionStatus\":\"success\"" output))
+               (is (search "\"selectedTools\":[\"shell-task-cleanup-tool\",\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+               (is (search "\"toolResults\":[{\"toolId\":\"shell-task-cleanup-tool\"" output))
+               (is (search "\"statusFilter\":\"all\"" output))
+               (is (search "\"terminationReasonFilter\":null" output))
+               (is (search "\"removedCount\":2" output))
+               (is (search "\"remainingCount\":1" output))
+               (is (not (probe-file completed-output-path)))
+               (is (not (probe-file interrupted-output-path)))
+               (is (probe-file running-output-path))
+               (is (not (null (gethash running-task-id cl-cc.tools::*shell-background-task-registry*)))))
+             (let* ((fresh-interrupted-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-cleanup-interrupted-fresh')"
+                                                                            :directory directory
+                                                                            :background t))))
+               (setf fresh-interrupted-task-id (getf fresh-interrupted-result :background-task-id)
+                     fresh-interrupted-output-path (getf fresh-interrupted-result :output-path))
+               (sleep 0.2)
+               (cl-cc.tools:shell-task-tool (list :task-id fresh-interrupted-task-id :action :interrupt))
+               (let ((termination-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                                 "cleanup shell tasks :: termination=interrupt"
+                                                                                                 "json")))))
+                 (is (search "\"terminationReasonFilter\":\"interrupt\"" termination-output))
+                 (is (search (format nil "\"removedTaskIds\":[~A]" (cl-cc::%cli-json-string fresh-interrupted-task-id)) termination-output))
+                 (is (not (search (format nil "\"removedTaskIds\":[~A]" (cl-cc::%cli-json-string completed-task-id)) termination-output))))))
+        (when running-task-id
+          (ignore-errors (cl-cc.tools:shell-task-tool (list :task-id running-task-id :action :stop)))
+          (remhash running-task-id cl-cc.tools::*shell-background-task-registry*))
+        (when completed-task-id
+          (remhash completed-task-id cl-cc.tools::*shell-background-task-registry*))
+        (when interrupted-task-id
+          (remhash interrupted-task-id cl-cc.tools::*shell-background-task-registry*))
+        (when fresh-interrupted-task-id
+          (remhash fresh-interrupted-task-id cl-cc.tools::*shell-background-task-registry*))
+        (sleep 0.2)
+        (when (and running-output-path (probe-file running-output-path))
+          (ignore-errors (delete-file running-output-path)))
+        (when (and completed-output-path (probe-file completed-output-path))
+          (ignore-errors (delete-file completed-output-path)))
+        (when (and interrupted-output-path (probe-file interrupted-output-path))
+          (ignore-errors (delete-file interrupted-output-path)))
+        (when (and fresh-interrupted-output-path (probe-file fresh-interrupted-output-path))
+          (ignore-errors (delete-file fresh-interrupted-output-path)))))))
+
+(test session-run-json-output-can-render-shell-task-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Seconds 5; [Console]::Out.Write('json-shell-task-ok')"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                            (format nil "shell task ~A" task-id)
+                                                                            "json")))))
+           (is (search "\"status\":\"success\"" output))
+           (is (search "\"executionStatus\":\"success\"" output))
+           (is (search "\"selectedTools\":[\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-tool\"" output))
+           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
+           (is (search "\"status\":\"running\"" output))
+           (is (search "\"running\":true" output))
+           (is (search "\"stopped\":false" output))
+           (is (search "\"stallDetected\":false" output))
+           (is (search "\"stallDetectedAt\":null" output))
+           (is (search "\"stallPromptLine\":null" output))
+           (is (search "\"terminationReason\":null" output))
+           (is (search "\"endedAt\":null" output))
+           (is (search "\"timedOut\":false" output))
+           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output)))
+      (when task-id
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test session-run-json-output-can-render-shell-task-wait-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "Start-Sleep -Milliseconds 300; [Console]::Out.Write('json-shell-task-wait-ok')"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                            (format nil "wait shell task ~A" task-id)
+                                                                            "json")))))
+           (is (search "\"status\":\"success\"" output))
+           (is (search "\"executionStatus\":\"success\"" output))
+           (is (search "\"selectedTools\":[\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-tool\"" output))
+           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
+           (is (search "\"action\":\"wait\"" output))
+           (is (search "\"status\":\"completed\"" output))
+           (is (search "\"terminationReason\":\"exit\"" output))
+           (is (search "\"endedAt\":" output))
+           (is (search "\"timedOut\":false" output))
+           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output)))
+      (when task-id
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test session-run-json-output-can-render-batch-shell-task-wait-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result-a (cl-cc.tools:shell-tool (list :command "Start-Sleep -Milliseconds 200; [Console]::Out.Write('json-shell-task-batch-wait-a')"
+                                                       :directory directory
+                                                       :background t)))
+         (start-result-b (cl-cc.tools:shell-tool (list :command "Start-Sleep -Milliseconds 250; [Console]::Out.Write('json-shell-task-batch-wait-b')"
+                                                       :directory directory
+                                                       :background t)))
+         (task-id-a (getf start-result-a :background-task-id))
+         (task-id-b (getf start-result-b :background-task-id))
+         (output-path-a (getf start-result-a :output-path))
+         (output-path-b (getf start-result-b :output-path)))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                            (format nil "wait tasks ~A, ~A" task-id-a task-id-b)
+                                                                            "json")))))
+           (is (search "\"status\":\"success\"" output))
+           (is (search "\"executionStatus\":\"success\"" output))
+           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-tool\"" output))
+           (is (search (format nil "\"taskIds\":[~A,~A]"
+                               (cl-cc::%cli-json-string task-id-a)
+                               (cl-cc::%cli-json-string task-id-b))
+                       output))
+           (is (search "\"taskCount\":2" output))
+           (is (search "\"completedCount\":2" output))
+           (is (search "\"tasks\":[{" output))
+           (is (search "\"terminationReason\":\"exit\"" output))
+           (is (search "\"endedAt\":" output))
+           (is (search "\"timedOut\":false" output)))
+      (when task-id-a
+        (remhash task-id-a cl-cc.tools::*shell-background-task-registry*))
+      (when task-id-b
+        (remhash task-id-b cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path-a (probe-file output-path-a))
+        (ignore-errors (delete-file output-path-a)))
+      (when (and output-path-b (probe-file output-path-b))
+        (ignore-errors (delete-file output-path-b))))))
+
+(test session-run-json-output-can-render-shell-task-detail-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "[Console]::Out.WriteLine('json-shell-task-detail-1'); [Console]::Out.WriteLine('json-shell-task-detail-2'); Start-Sleep -Seconds 5"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                            (format nil "shell task detail ~A" task-id)
+                                                                            "json")))))
+           (is (search "\"status\":\"success\"" output))
+           (is (search "\"executionStatus\":\"success\"" output))
+           (is (search "\"selectedTools\":[\"shell-task-detail-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-detail-tool\"" output))
+           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
+           (is (search "\"status\":\"running\"" output))
+           (is (search "\"running\":true" output))
+           (is (search "\"stopped\":false" output))
+           (is (search "\"startedAt\":" output))
+           (is (search "\"stallDetected\":false" output))
+           (is (search "\"stallDetectedAt\":null" output))
+           (is (search "\"stallPromptLine\":null" output))
+           (is (search "\"terminationReason\":null" output))
+           (is (search "\"endedAt\":null" output))
+           (is (search "\"durationSeconds\":" output))
+           (is (search "\"outputBytes\":" output))
+           (is (search "\"outputLineCount\":2" output))
+           (is (search "\"outputUpdatedAt\":" output))
+           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output)))
+      (when task-id
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test session-run-json-output-can-render-shell-task-output-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "[Console]::Out.WriteLine('json-out-1'); [Console]::Out.WriteLine('json-out-2'); [Console]::Out.WriteLine('json-out-3')"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (progn
+           (sleep 0.4)
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                              (format nil "shell task output ~A :: 2" task-id)
+                                                                              "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"executionStatus\":\"success\"" output))
+             (is (search "\"selectedTools\":[\"shell-task-output-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-output-tool\"" output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
+             (is (search "\"mode\":\"tail\"" output))
+             (is (search "\"running\":false" output))
+             (is (search "\"stopped\":false" output))
+             (is (search "\"linesRequested\":2" output))
+             (is (search "\"requestedStartLine\":null" output))
+             (is (search "\"requestedEndLine\":null" output))
+             (is (search "\"followSeconds\":null" output))
+             (is (search "\"waitUntilFinished\":false" output))
+             (is (search "\"startLine\":2" output))
+             (is (search "\"endLine\":3" output))
+             (is (search "\"totalLines\":3" output))
+             (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output))
+             (is (search (format nil "\"content\":~A" (cl-cc::%cli-json-string (format nil "2:json-out-2~%3:json-out-3"))) output))))
+      (when task-id
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test session-run-json-output-can-render-blocking-shell-task-output-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result (cl-cc.tools:shell-tool (list :command "[Console]::Out.WriteLine('json-block-1'); Start-Sleep -Milliseconds 150; [Console]::Out.WriteLine('json-block-2'); Start-Sleep -Milliseconds 150; [Console]::Out.WriteLine('json-block-3')"
+                                                     :directory directory
+                                                     :background t)))
+         (task-id (getf start-result :background-task-id))
+         (output-path (getf start-result :output-path)))
+    (unwind-protect
+         (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                          (format nil "wait shell task output ~A :: start=1 :: lines=5" task-id)
+                                                                          "json")))))
+           (is (search "\"status\":\"success\"" output))
+           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-output-tool\"" output))
+           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
+           (is (search "\"waitUntilFinished\":true" output))
+           (is (search "\"followSeconds\":null" output))
+           (is (search "\"running\":false" output))
+           (is (search "\"startLine\":1" output))
+           (is (search "\"endLine\":3" output))
+           (is (search "\"totalLines\":3" output))
+           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output))
+           (is (search (format nil "\"content\":~A" (cl-cc::%cli-json-string (format nil "1:json-block-1~%2:json-block-2~%3:json-block-3"))) output)))
+      (when task-id
+        (remhash task-id cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path (probe-file output-path))
+        (ignore-errors (delete-file output-path))))))
+
+(test session-run-json-output-can-render-batch-shell-task-output-tool-result
+  (let* ((directory (uiop:native-namestring (uiop:temporary-directory)))
+         (start-result-a (cl-cc.tools:shell-tool (list :command "[Console]::Out.WriteLine('json-batch-1'); [Console]::Out.WriteLine('json-batch-2'); [Console]::Out.WriteLine('json-batch-3')"
+                                                       :directory directory
+                                                       :background t)))
+         (start-result-b (cl-cc.tools:shell-tool (list :command "[Console]::Out.WriteLine('json-batch-4'); [Console]::Out.WriteLine('json-batch-5'); [Console]::Out.WriteLine('json-batch-6')"
+                                                       :directory directory
+                                                       :background t)))
+         (task-id-a (getf start-result-a :background-task-id))
+         (task-id-b (getf start-result-b :background-task-id))
+         (output-path-a (getf start-result-a :output-path))
+         (output-path-b (getf start-result-b :output-path)))
+    (unwind-protect
+         (progn
+           (sleep 0.4)
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                              (format nil "shell task outputs ~A, ~A :: 2" task-id-a task-id-b)
+                                                                              "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-output-tool\"" output))
+             (is (search (format nil "\"taskIds\":[~A,~A]"
+                                 (cl-cc::%cli-json-string task-id-a)
+                                 (cl-cc::%cli-json-string task-id-b))
+                         output))
+             (is (search "\"taskCount\":2" output))
+             (is (search "\"mode\":\"tail\"" output))
+             (is (search "\"outputPath\":null" output))
+             (is (search "\"totalLines\":null" output))
+             (is (search "\"completedCount\":2" output))
+             (is (search "\"tasks\":[{" output))
+             (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path-a)) output))
+             (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path-b)) output))
+             (is (search (format nil "\"content\":~A" (cl-cc::%cli-json-string (format nil "2:json-batch-2~%3:json-batch-3"))) output))
+             (is (search (format nil "\"content\":~A" (cl-cc::%cli-json-string (format nil "2:json-batch-5~%3:json-batch-6"))) output))))
+      (when task-id-a
+        (remhash task-id-a cl-cc.tools::*shell-background-task-registry*))
+      (when task-id-b
+        (remhash task-id-b cl-cc.tools::*shell-background-task-registry*))
+      (sleep 0.2)
+      (when (and output-path-a (probe-file output-path-a))
+        (ignore-errors (delete-file output-path-a)))
+      (when (and output-path-b (probe-file output-path-b))
+        (ignore-errors (delete-file output-path-b))))))
+
 (test session-run-json-output-can-render-file-write-tool-result
   (let ((path (uiop:native-namestring
                (uiop:merge-pathnames* "session-run-json-file-write.txt"
@@ -241,12 +671,21 @@
              (is (search "\"preview\":null" output))
              (is (search "\"totalMatches\":1" output))
              (is (search "\"selectedOccurrence\":1" output))
+             (is (search "\"lineContext\":1" output))
+             (is (search "\"ignoreCase\":false" output))
+             (is (search "\"useRegex\":false" output))
+             (is (search "\"multiline\":false" output))
+             (is (search "\"dotAll\":false" output))
+             (is (search "\"wholeWord\":false" output))
+             (is (search "\"leftWordBoundary\":false" output))
+             (is (search "\"rightWordBoundary\":false" output))
              (is (search "\"matchStartLine\":1" output))
              (is (search "\"matchStartColumn\":7" output))
              (is (search "\"matchEndLine\":1" output))
              (is (search "\"matchEndColumn\":13" output))
              (is (search "\"diffPreview\":" output))
              (is (search "\"lineDiffPreview\":" output))
+             (is (search "\"unifiedDiffPreview\":" output))
              (is (search "\"writeApplied\":true" output))
              (is (string= (uiop:read-file-string path) "before value after"))))
       (when (probe-file path)
@@ -270,6 +709,14 @@
              (is (search "\"matchCount\":1" output))
              (is (search "\"totalMatches\":1" output))
              (is (search "\"selectedOccurrence\":1" output))
+             (is (search "\"lineContext\":1" output))
+             (is (search "\"ignoreCase\":false" output))
+             (is (search "\"useRegex\":false" output))
+             (is (search "\"multiline\":false" output))
+             (is (search "\"dotAll\":false" output))
+             (is (search "\"wholeWord\":false" output))
+             (is (search "\"leftWordBoundary\":false" output))
+             (is (search "\"rightWordBoundary\":false" output))
              (is (search "\"matchStartLine\":1" output))
              (is (search "\"matchStartColumn\":7" output))
              (is (search "\"matchEndLine\":1" output))
@@ -278,6 +725,7 @@
              (is (search "\"afterPreview\":" output))
              (is (search "\"diffPreview\":" output))
              (is (search "\"lineDiffPreview\":" output))
+             (is (search "\"unifiedDiffPreview\":" output))
              (is (search "\"writeApplied\":null" output))
              (is (string= (uiop:read-file-string path) "before preview after"))))
       (when (probe-file path)
@@ -298,12 +746,21 @@
              (is (search "第 2/2 处命中" output))
              (is (search "\"totalMatches\":2" output))
              (is (search "\"selectedOccurrence\":2" output))
+             (is (search "\"lineContext\":1" output))
+             (is (search "\"ignoreCase\":false" output))
+             (is (search "\"useRegex\":false" output))
+             (is (search "\"multiline\":false" output))
+             (is (search "\"dotAll\":false" output))
+             (is (search "\"wholeWord\":false" output))
+             (is (search "\"leftWordBoundary\":false" output))
+             (is (search "\"rightWordBoundary\":false" output))
              (is (search "\"matchStartLine\":1" output))
              (is (search "\"matchStartColumn\":17" output))
              (is (search "\"matchEndLine\":1" output))
              (is (search "\"matchEndColumn\":21" output))
              (is (search "\"diffPreview\":" output))
              (is (search "\"lineDiffPreview\":" output))
+             (is (search "\"unifiedDiffPreview\":" output))
              (is (string= (uiop:read-file-string path) "start dup middle value  tail"))))
       (when (probe-file path)
         (delete-file path)))))

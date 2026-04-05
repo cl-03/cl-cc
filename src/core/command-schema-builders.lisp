@@ -80,6 +80,13 @@
                 :fields (list (schema-field "tool" "计划步骤对应的工具标识" :type :string)
                               (schema-field "input" "计划步骤归一化后的工具输入" :required nil :nullable t))))
 
+(defun %session-git-context-output-fields ()
+  (list (schema-field "gitRoot" "本次 session run 检测到的 Git 根目录；未处于 Git 仓库时为 null" :type :string :required nil :nullable t)
+        (schema-field "gitBranch" "本次 session run 检测到的 Git 当前分支；无法识别时为 null" :type :string :required nil :nullable t)
+        (schema-field "gitDirty" "当前 Git 工作树是否存在未提交改动；未处于 Git 仓库时为 null" :type :boolean :required nil :nullable t)
+        (schema-field "gitStatusLines" "`git status --short` 的逐行快照；仓库干净时为空数组，未处于 Git 仓库时为 null" :type :array :required nil :nullable t)
+        (schema-field "gitRecentCommits" "最近的 Git commit 摘要列表；未处于 Git 仓库时为 null" :type :array :required nil :nullable t)))
+
 (defun %session-output-json-fields (session-id-summary history-index-summary session-status-summary duration-summary
                                       &key extra-fields)
   (append (list (%success-status-schema-field "结果状态，当前固定为 success")
@@ -114,7 +121,7 @@
 
 (defun %run-error-code-values ()
   '("FAIL" "PERMISSION-DENIED" "TOOL-NOT-FOUND" "FILE-READ-FAILED" "DIRECTORY-LIST-FAILED"
-    "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED"))
+    "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED" "SHELL-EXECUTION-FAILED"))
 
 (defun %output-format-option (&key default-when)
   (append '(:flags ("-o" "--output-format")
@@ -250,7 +257,19 @@
                                           (:tool-id "file-write-tool" :kind :output)
                                           (:tool-id "file-write-tool" :kind :error-output)
                                           (:tool-id "file-edit-tool" :kind :output)
-                                          (:tool-id "file-edit-tool" :kind :error-output)))
+                                          (:tool-id "file-edit-tool" :kind :error-output)
+                                          (:tool-id "shell-tool" :kind :output)
+                                          (:tool-id "shell-tool" :kind :error-output)
+                                          (:tool-id "shell-task-list-tool" :kind :output)
+                                          (:tool-id "shell-task-list-tool" :kind :error-output)
+                                          (:tool-id "shell-task-detail-tool" :kind :output)
+                                          (:tool-id "shell-task-detail-tool" :kind :error-output)
+                                          (:tool-id "shell-task-cleanup-tool" :kind :output)
+                                          (:tool-id "shell-task-cleanup-tool" :kind :error-output)
+                                          (:tool-id "shell-task-tool" :kind :output)
+                                          (:tool-id "shell-task-tool" :kind :error-output)
+                                          (:tool-id "shell-task-output-tool" :kind :output)
+                                          (:tool-id "shell-task-output-tool" :kind :error-output)))
         (schema-field "error" "失败时的人类可读摘要，成功时为 null" :type :string :required nil :nullable t)
         (%run-error-code-schema-field)))
 

@@ -122,26 +122,42 @@
           (uiop:merge-pathnames* "run-session-result-test.session"
                      (uiop:temporary-directory)))))
         (unwind-protect
-          (let* ((result-object (cl-cc.services:run-session-result "run-user" :input "hello session" :session-path path))
-           (payload (cl-cc.lib:result-payload result-object)))
-         (is (eq (cl-cc.lib:result-status result-object) :success))
-         (is (string= (getf payload :session-id) "run-user"))
-         (is (= (getf payload :history-index) 1))
-         (is (eq (getf payload :session-status) :active))
-         (is (string= (getf payload :input) "hello session"))
-         (is (eq (getf payload :execution-status) :success))
-         (is (string= (getf payload :result) "tool:echo-tool result:hello session"))
-         (is (= (length (getf payload :tool-results)) 1))
-         (is (string= (getf (first (getf payload :tool-results)) :tool) "echo-tool"))
-         (is (string= (getf payload :session-path) path))
-         (is (getf payload :saved))
-         (is (numberp (getf payload :duration-seconds)))
-         (is (= (getf payload :exit-code) 0))
-         (is (probe-file path))
-         (is (search "会话已执行: run-user" (cl-cc.lib:result-message result-object)))
-         (is (search "输入: hello session" (cl-cc.lib:result-message result-object)))
-         (is (search "执行状态: success" (cl-cc.lib:result-message result-object)))
-         (is (search "执行结果: tool:echo-tool result:hello session" (cl-cc.lib:result-message result-object))))
+              (let ((cl-cc.lib::*git-command-runner*
+                      (lambda (arguments &key directory)
+                        (declare (ignore directory))
+                        (cond
+                            ((equal arguments '("rev-parse" "--show-toplevel")) "D:/VSCode/cl-cc/cl-cc")
+                          ((equal arguments '("branch" "--show-current")) "main")
+                          ((equal arguments '("status" "--short")) "M src/services/session-service.lisp")
+                          ((equal arguments '("log" "--oneline" "-5")) "abc1234 add git snapshot")
+                          (t nil)))))
+                (let* ((result-object (cl-cc.services:run-session-result "run-user" :input "hello session" :session-path path))
+                       (payload (cl-cc.lib:result-payload result-object)))
+                  (is (eq (cl-cc.lib:result-status result-object) :success))
+                  (is (string= (getf payload :session-id) "run-user"))
+                  (is (= (getf payload :history-index) 1))
+                  (is (eq (getf payload :session-status) :active))
+                  (is (string= (getf payload :input) "hello session"))
+                  (is (eq (getf payload :execution-status) :success))
+                  (is (equal (getf payload :git-root) "D:/VSCode/cl-cc/cl-cc"))
+                  (is (equal (getf payload :git-branch) "main"))
+                  (is (getf payload :git-dirty))
+                  (is (equal (getf payload :git-status-lines)
+                             '("M src/services/session-service.lisp")))
+                  (is (equal (getf payload :git-recent-commits)
+                             '("abc1234 add git snapshot")))
+                  (is (string= (getf payload :result) "tool:echo-tool result:hello session"))
+                  (is (= (length (getf payload :tool-results)) 1))
+                  (is (string= (getf (first (getf payload :tool-results)) :tool) "echo-tool"))
+                  (is (string= (getf payload :session-path) path))
+                  (is (getf payload :saved))
+                  (is (numberp (getf payload :duration-seconds)))
+                  (is (= (getf payload :exit-code) 0))
+                  (is (probe-file path))
+                  (is (search "会话已执行: run-user" (cl-cc.lib:result-message result-object)))
+                  (is (search "输入: hello session" (cl-cc.lib:result-message result-object)))
+                  (is (search "执行状态: success" (cl-cc.lib:result-message result-object)))
+                  (is (search "执行结果: tool:echo-tool result:hello session" (cl-cc.lib:result-message result-object)))))
        (when (probe-file path)
          (delete-file path)))))
 
@@ -343,7 +359,7 @@
                         '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
              (is (equal (first (getf payload :execution-plan))
                         (list :tool "file-edit-tool"
-              :input (list :path path :old-text " marker" :new-text " updated" :preview nil :occurrence nil))))
+              :input (list :path path :old-text " marker" :new-text " updated" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil))))
              (is (string= (getf tool-record :tool) "file-edit-tool"))
              (is (eq (getf tool-record :status) :success))
              (is (string= (getf (getf tool-record :output) :result)
@@ -369,8 +385,515 @@
                          (getf payload :result)))
              (is (equal (first (getf payload :execution-plan))
                         (list :tool "file-edit-tool"
-                  :input (list :path path :old-text " preview" :new-text " value" :preview t :occurrence nil))))
+              :input (list :path path :old-text " preview" :new-text " value" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil))))
              (is (search "预览编辑文件:" (getf (getf tool-record :output) :result)))
              (is (string= (uiop:read-file-string path) "before preview after"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-regex-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-regex-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before token-42 after" stream))
+           (let* ((input (format nil "regex edit file ~A :: token-[0-9]+ :: value" path))
+                  (result-object (cl-cc.services:run-session-result "regex-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (string= (getf payload :result)
+                          (format nil "tool:file-edit-tool result:编辑文件: ~A" path)))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                          :input (list :path path :old-text " token-[0-9]+" :new-text " value" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t))))
+             (is (eq (getf tool-record :status) :success))
+             (is (getf (getf tool-record :output) :use-regex))
+             (is (not (getf (getf tool-record :output) :multiline)))
+             (is (not (getf (getf tool-record :output) :dot-all)))
+             (is (not (getf (getf tool-record :output) :whole-word)))
+             (is (not (getf (getf tool-record :output) :left-word-boundary)))
+             (is (not (getf (getf tool-record :output) :right-word-boundary)))
+             (is (search "token-42" (getf (getf tool-record :output) :matched-text)))
+             (is (string= (uiop:read-file-string path) "before value after"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-regex-edit-file-with-capture-groups
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-regex-capture-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before token-42 after" stream))
+           (let* ((input (format nil "regex edit file ~A :: (token)-([0-9]+) :: $2:$1" path))
+                  (result-object (cl-cc.services:run-session-result "regex-capture-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output)))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (getf output :use-regex))
+             (is (not (getf output :multiline)))
+             (is (not (getf output :dot-all)))
+             (is (not (getf output :whole-word)))
+             (is (not (getf output :left-word-boundary)))
+             (is (not (getf output :right-word-boundary)))
+             (is (string= (getf output :matched-text) " token-42"))
+             (is (string= (getf output :replacement-text) " 42:token"))
+             (is (string= (uiop:read-file-string path) "before 42:token after"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-whole-word-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-whole-word-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "target retarget target_1" stream))
+               (let* ((input (format nil "whole word edit file ~A::target::done" path))
+                  (result-object (cl-cc.services:run-session-result "whole-word-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                  :input (list :path path :old-text "target" :new-text "done" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word t :left-word-boundary nil :right-word-boundary nil))))
+             (is (getf (getf tool-record :output) :whole-word))
+             (is (getf (getf tool-record :output) :left-word-boundary))
+             (is (getf (getf tool-record :output) :right-word-boundary))
+             (is (string= (uiop:read-file-string path) "done retarget target_1"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-order-independent-plain-flags-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-order-independent-plain-flags-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "Target reTarget target_1" stream))
+           (let* ((input (format nil "preview whole word ignore case edit file ~A::target::done" path))
+                  (result-object (cl-cc.services:run-session-result "preview-order-independent-plain-flags-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "target" :new-text "done" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word t :left-word-boundary nil :right-word-boundary nil))))
+             (is (getf output :preview))
+             (is (getf output :ignore-case))
+             (is (getf output :whole-word))
+             (is (getf output :left-word-boundary))
+             (is (getf output :right-word-boundary))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "Target reTarget target_1"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-order-independent-plain-replace-all-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-order-independent-plain-replace-all-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "TOKEN token" stream))
+           (let* ((input (format nil "preview replace all ignore case edit file ~A::token::done" path))
+                  (result-object (cl-cc.services:run-session-result "preview-order-independent-plain-replace-all-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token" :new-text "done" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :replace-all t))))
+             (is (getf output :preview))
+             (is (getf output :ignore-case))
+             (is (= (getf output :match-count) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (null (getf output :selected-occurrence)))
+             (is (string= (uiop:read-file-string path) "TOKEN token"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-chinese-legacy-plain-replace-all-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-chinese-legacy-plain-replace-all-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "token x token" stream))
+           (let* ((input (format nil "预览全部替换文件 ~A::token::done" path))
+                  (result-object (cl-cc.services:run-session-result "preview-chinese-legacy-plain-replace-all-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token" :new-text "done" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :replace-all t))))
+             (is (getf output :preview))
+             (is (= (getf output :match-count) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (null (getf output :selected-occurrence)))
+             (is (string= (uiop:read-file-string path) "token x token"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-chinese-plain-flags-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-chinese-plain-flags-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "target retarget" stream))
+           (let* ((input (format nil "预览忽略大小写左边界编辑文件 ~A::target::done" path))
+                  (result-object (cl-cc.services:run-session-result "preview-chinese-plain-flags-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "target" :new-text "done" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary t :right-word-boundary nil))))
+             (is (getf output :preview))
+             (is (getf output :ignore-case))
+             (is (not (getf output :whole-word)))
+             (is (getf output :left-word-boundary))
+             (is (not (getf output :right-word-boundary)))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "target retarget"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-right-boundary-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-right-boundary-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "id-300x xid-44x id-7" stream))
+           (let* ((input (format nil "preview regex right word boundary edit file ~A::id-[0-9]+::item" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-right-boundary-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "id-[0-9]+" :new-text "item" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary t :use-regex t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (not (getf output :multiline)))
+             (is (not (getf output :dot-all)))
+             (is (not (getf output :whole-word)))
+             (is (not (getf output :left-word-boundary)))
+             (is (getf output :right-word-boundary))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "id-300x xid-44x id-7"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-order-independent-boundary-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-order-independent-boundary-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "id-300x xid-44x id-7" stream))
+           (let* ((input (format nil "preview regex right word boundary left word boundary edit file ~A::id-[0-9]+::item" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-order-independent-boundary-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "id-[0-9]+" :new-text "item" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary t :right-word-boundary t :use-regex t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :whole-word))
+             (is (getf output :left-word-boundary))
+             (is (getf output :right-word-boundary))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) "id-7"))
+             (is (string= (uiop:read-file-string path) "id-300x xid-44x id-7"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-ignore-case-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-ignore-case-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "TOKEN-42 tokenized" stream))
+           (let* ((input (format nil "preview regex ignore case edit file ~A::token-[a-z0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-ignore-case-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[a-z0-9]+" :new-text "value" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :ignore-case))
+             (is (not (getf output :multiline)))
+             (is (not (getf output :dot-all)))
+             (is (not (getf output :whole-word)))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "TOKEN-42 tokenized"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-replace-all-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-replace-all-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "token-1 x token-2" stream))
+           (let* ((input (format nil "preview regex replace all in file ~A::token-[0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-replace-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :replace-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (not (getf output :multiline)))
+             (is (not (getf output :dot-all)))
+             (is (= (getf output :match-count) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (null (getf output :selected-occurrence)))
+             (is (string= (uiop:read-file-string path) "token-1 x token-2"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-chinese-legacy-regex-replace-all-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-chinese-legacy-regex-replace-all-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "token-1 x token-2" stream))
+           (let* ((input (format nil "预览正则全部替换文件 ~A::token-[0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-chinese-legacy-regex-replace-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :replace-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (= (getf output :match-count) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (null (getf output :selected-occurrence)))
+             (is (string= (uiop:read-file-string path) "token-1 x token-2"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-order-independent-replace-all-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-order-independent-replace-all-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "TOKEN-1 x token-2" stream))
+           (let* ((input (format nil "preview regex replace all ignore case edit file ~A::token-[0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-order-independent-replace-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :replace-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :ignore-case))
+             (is (= (getf output :match-count) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (null (getf output :selected-occurrence)))
+             (is (string= (uiop:read-file-string path) "TOKEN-1 x token-2"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-line-context-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-line-context-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "token-42" stream))
+           (let* ((input (format nil "preview regex context 0 edit file ~A::token-[0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-line-context-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context 0 :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (not (getf output :multiline)))
+             (is (not (getf output :dot-all)))
+             (is (= (getf output :line-context) 0))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "token-42"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-multiline-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-multiline-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "alpha~%id-42~%omega") stream))
+           (let* ((input (format nil "preview regex multiline edit file ~A::^id-[0-9]+$::item" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-multiline-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "^id-[0-9]+$" :new-text "item" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :multiline t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :multiline))
+             (is (not (getf output :dot-all)))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) "id-42"))
+             (is (string= (getf output :after-preview) (format nil "alpha~%item~%omega")))
+             (is (string= (uiop:read-file-string path) (format nil "alpha~%id-42~%omega")))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-regex-dot-all-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-regex-dot-all-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "begin~%middle~%end") stream))
+           (let* ((input (format nil "preview regex dot all edit file ~A::begin.*end::block" path))
+                  (result-object (cl-cc.services:run-session-result "preview-regex-dot-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "begin.*end" :new-text "block" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :dot-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (not (getf output :multiline)))
+             (is (getf output :dot-all))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) (format nil "begin~%middle~%end")))
+             (is (string= (getf output :after-preview) "block"))
+             (is (string= (uiop:read-file-string path) (format nil "begin~%middle~%end")))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-chinese-regex-multiline-dot-all-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-chinese-regex-multiline-dot-all-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "id-42" stream))
+           (let* ((input (format nil "预览正则多行模式点号跨行编辑文件 ~A::^id-[0-9]+$::item" path))
+                  (result-object (cl-cc.services:run-session-result "preview-chinese-regex-multiline-dot-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "^id-[0-9]+$" :new-text "item" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :multiline t :dot-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :multiline))
+             (is (getf output :dot-all))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) "id-42"))
+             (is (string= (getf output :after-preview) "item"))
+             (is (string= (uiop:read-file-string path) "id-42"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-chinese-regex-ignore-case-multiline-dot-all-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-chinese-regex-ignore-case-multiline-dot-all-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "ID-42" stream))
+           (let* ((input (format nil "预览正则忽略大小写多行模式点号跨行编辑文件 ~A::^id-[0-9]+$::item" path))
+                  (result-object (cl-cc.services:run-session-result "preview-chinese-regex-ignore-case-multiline-dot-all-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "^id-[0-9]+$" :new-text "item" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :multiline t :dot-all t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :ignore-case))
+             (is (getf output :multiline))
+             (is (getf output :dot-all))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) "ID-42"))
+             (is (string= (getf output :after-preview) "item"))
+             (is (string= (uiop:read-file-string path) "ID-42"))))
       (when (probe-file path)
         (delete-file path)))))

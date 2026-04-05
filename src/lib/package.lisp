@@ -6,5 +6,6 @@
            :cl-cc-error :make-cl-cc-error :error-code :error-message
            :result :make-result :result-status :result-payload :result-message
            :debug-log
-           :parse-json-document :json-null-p))
+           :parse-json-document :json-null-p
+           :capture-git-context))
 (in-package :cl-cc.lib)

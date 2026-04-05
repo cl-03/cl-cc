@@ -2,7 +2,7 @@
 (in-package :cl-cc.services)
 
 (defparameter +default-allowed-actions+
-  '("file-write" "file-read" "run-fixture" "echo-tool" "failing-tool" "file-edit-tool"))
+  '("file-write" "file-read" "run-fixture" "echo-tool" "failing-tool" "file-edit-tool" "shell-tool" "shell-task-list-tool" "shell-task-detail-tool" "shell-task-cleanup-tool" "shell-task-tool" "shell-task-output-tool"))
 
 (defun %permission-action-name (action)
   (cl-cc.lib:string-designator-downcase action))

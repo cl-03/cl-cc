@@ -25,7 +25,7 @@
 
 (defun %approval-required-p (tool context)
   (and (%approval-enabled-p context)
-       (eq (%tool-permission-profile tool) :file-write)))
+  (member (%tool-permission-profile tool) '(:file-write :shell))))
 
 (defun %approval-callback (context)
   (getf context :approval-callback))

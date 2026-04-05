@@ -177,6 +177,6 @@
     (is (equal (%command-json-field-names session-resume)
                '("status" "sessionId" "historyIndex" "sessionStatus" "durationSeconds" "exitCode")))
     (is (equal (%command-json-field-names session-run)
-          '("status" "sessionId" "historyIndex" "sessionStatus" "input" "executionStatus" "selectedTools" "executionPlan" "result" "toolResults" "sessionPath" "saved" "durationSeconds" "exitCode")))
+          '("status" "sessionId" "historyIndex" "sessionStatus" "input" "executionStatus" "selectedTools" "executionPlan" "gitRoot" "gitBranch" "gitDirty" "gitStatusLines" "gitRecentCommits" "result" "toolResults" "sessionPath" "saved" "durationSeconds" "exitCode")))
     (is (equal (%command-json-field-names run-fixture)
                '("status" "fixtureCount" "successfulCount" "failedCount" "durationSeconds" "statusCounts" "ok" "exitCode" "results")))))

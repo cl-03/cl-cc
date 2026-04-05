@@ -1,10 +1,29 @@
 ;;;; cl-cc.asd - canonical ASDF system definition for CL-CC
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  ;; Keep the canonical ASDF entrypoint runnable in a fresh SBCL by
+  ;; opportunistically loading a user-local Quicklisp when dependencies are absent.
+  (labels ((quicklisp-setup-candidates ()
+             (let ((home (user-homedir-pathname)))
+               (remove nil
+                       (list (and home
+                                  (merge-pathnames #P"quicklisp/setup.lisp" home))
+                             #P"C:/quicklisp/setup.lisp"
+                             #P"D:/quicklisp/setup.lisp"))))
+           (ensure-quicklisp-dependencies ()
+             (unless (ignore-errors (asdf:find-system "alexandria"))
+               (loop for candidate in (quicklisp-setup-candidates)
+                     for setup = (and candidate (probe-file candidate))
+                     when setup
+                       do (load setup :verbose nil :print nil)
+                          (return t)))))
+    (ensure-quicklisp-dependencies)))
+
 (asdf:defsystem "cl-cc"
   :version "0.1.0"
   :description "CL-CC: 纯 Common Lisp Claude Code CLI 核心实现"
   :author "CL-CC Team"
   :license "MIT"
-  :depends-on ("alexandria" "uiop")
+  :depends-on ("alexandria" "uiop" "cl-ppcre")
   :in-order-to ((test-op (test-op "cl-cc/tests")))
   :serial t
   :components ((:file "src/package")
@@ -14,6 +33,7 @@
                (:file "src/lib/errors")
                (:file "src/lib/result")
                (:file "src/lib/debug-log")
+               (:file "src/lib/git-context")
                (:file "src/lib/json")
                (:file "src/models/package")
                (:file "src/models/command-definition")
@@ -30,6 +50,12 @@
                (:file "src/tools/failing-tool")
                (:file "src/tools/file-read-tool")
                (:file "src/tools/file-write-tool")
+               (:file "src/tools/shell-tool")
+               (:file "src/tools/shell-task-list-tool")
+               (:file "src/tools/shell-task-detail-tool")
+               (:file "src/tools/shell-task-tool")
+               (:file "src/tools/shell-task-cleanup-tool")
+               (:file "src/tools/shell-task-output-tool")
                (:file "src/tools/file-edit-tool")
                (:file "src/tools/directory-list-tool")
                (:file "src/tools/grep-tool")
@@ -71,10 +97,17 @@
                (:file "tests/contract/fixture-helpers")
                (:file "tests/unit/lib-text-test")
                (:file "tests/unit/lib-time-test")
+               (:file "tests/unit/lib-git-context-test")
                (:file "tests/unit/argv-parser-test")
                (:file "tests/unit/models-test")
                (:file "tests/unit/file-read-tool-test")
                (:file "tests/unit/file-write-tool-test")
+               (:file "tests/unit/shell-tool-test")
+               (:file "tests/unit/shell-task-list-tool-test")
+               (:file "tests/unit/shell-task-detail-tool-test")
+               (:file "tests/unit/shell-task-tool-test")
+               (:file "tests/unit/shell-task-cleanup-tool-test")
+               (:file "tests/unit/shell-task-output-tool-test")
                (:file "tests/unit/file-edit-tool-test")
                (:file "tests/unit/directory-list-tool-test")
                (:file "tests/unit/grep-tool-test")

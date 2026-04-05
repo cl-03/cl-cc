@@ -71,10 +71,24 @@
                                   :raw-result raw-result
                                   :condition condition))))
 
+(defun %normalized-tool-success-raw-result (tool-id raw-result)
+  (if (and (string= tool-id "shell-tool")
+           (listp raw-result))
+      (append raw-result
+              (unless (member :background raw-result)
+                (list :background nil))
+              (unless (member :background-task-id raw-result)
+                (list :background-task-id nil))
+              (unless (member :output-path raw-result)
+                (list :output-path nil))
+              (unless (member :process-id raw-result)
+                (list :process-id nil)))
+      raw-result))
+
 (defun %tool-success-output (tool-id raw-result)
   (%tool-schema-output tool-id
                        #'cl-cc.models:tool-output-schema
-                       :raw-result raw-result))
+                       :raw-result (%normalized-tool-success-raw-result tool-id raw-result)))
 
 (defun %tool-error-output (tool-id condition)
   (%tool-schema-output tool-id

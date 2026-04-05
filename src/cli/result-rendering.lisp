@@ -99,10 +99,19 @@
               (when (> (length segment) 1)
                 (write-string (subseq segment 1) stream))))))))
 
+(defun %cli-key-default-false-p (key)
+  (member key '(:ignore-case :use-regex :multiline :dot-all :whole-word :left-word-boundary :right-word-boundary :timed-out :background :running :stopped :stall-detected :wait-until-finished) :test #'eq))
+
+(defun %cli-json-plist-field-value (key value)
+  (if (and (null value)
+           (%cli-key-default-false-p key))
+      (%cli-json-boolean nil)
+      (%cli-json-value value)))
+
 (defun %cli-plist-json-fields (plist)
   (loop for (key value) on plist by #'cddr
         collect (%cli-json-field (%cli-json-escape-string (%cli-plist-key-name key))
-                                 (%cli-json-value value))))
+                                 (%cli-json-plist-field-value key value))))
 
 (defun %cli-json-value (value)
   (cond
@@ -263,6 +272,11 @@
          (execution-status (getf payload :execution-status :missing))
          (selected-tools (getf payload :selected-tools :missing))
          (execution-plan (getf payload :execution-plan :missing))
+      (git-root (getf payload :git-root :missing))
+      (git-branch (getf payload :git-branch :missing))
+      (git-dirty (getf payload :git-dirty :missing))
+      (git-status-lines (getf payload :git-status-lines :missing))
+      (git-recent-commits (getf payload :git-recent-commits :missing))
          (result (getf payload :result :missing))
          (tool-results (getf payload :tool-results :missing))
          (session-path (getf payload :session-path :missing))
@@ -292,6 +306,26 @@
       (setf fields (append fields
                            (list (%cli-json-field "executionPlan"
                                                   (%cli-json-value execution-plan))))))
+    (when (not (eq git-root :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "gitRoot"
+                                                  (%cli-json-string-or-null git-root))))))
+    (when (not (eq git-branch :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "gitBranch"
+                                                  (%cli-json-string-or-null git-branch))))))
+    (when (not (eq git-dirty :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "gitDirty"
+                                                  (%cli-json-boolean git-dirty))))))
+    (when (not (eq git-status-lines :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "gitStatusLines"
+                                                  (%cli-json-value git-status-lines))))))
+    (when (not (eq git-recent-commits :missing))
+      (setf fields (append fields
+                           (list (%cli-json-field "gitRecentCommits"
+                                                  (%cli-json-value git-recent-commits))))))
     (when (not (eq result :missing))
       (setf fields (append fields
                            (list (%cli-json-field "result"

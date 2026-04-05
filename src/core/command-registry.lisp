@@ -131,6 +131,7 @@
                                                 (list (%session-execution-status-output-field "本次 session run 的执行状态"))
                                                 (list (%session-selected-tools-output-field))
                                                 (list (%session-execution-plan-output-field))
+                                                (%session-git-context-output-fields)
                                                 (list (%session-execution-result-output-field "本次 session run 的稳定文本执行结果"))
                                                 (list (%session-execution-tool-results-output-field))
                                                 (%session-persistence-output-fields))))

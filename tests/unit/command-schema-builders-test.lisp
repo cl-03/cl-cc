@@ -101,7 +101,7 @@
                '("success" "failed" "denied" "not-found")))
     (is (equal (getf error-code :enum)
                '("FAIL" "PERMISSION-DENIED" "TOOL-NOT-FOUND" "FILE-READ-FAILED" "DIRECTORY-LIST-FAILED"
-                 "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED")))))
+                 "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED" "SHELL-EXECUTION-FAILED")))))
 
 (test run-fixture-schema-builders-retain-nested-shape
   (let* ((json-fields (cl-cc.core::%run-fixture-output-json-fields))

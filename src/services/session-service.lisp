@@ -154,6 +154,26 @@
     (and (listp summary)
          (getf summary :execution-plan))))
 
+(defun %session-run-git-context (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (and (listp summary)
+         (getf summary :git-context))))
+
+(defun %session-run-git-root (session)
+  (getf (%session-run-git-context session) :root))
+
+(defun %session-run-git-branch (session)
+  (getf (%session-run-git-context session) :branch))
+
+(defun %session-run-git-dirty (session)
+  (getf (%session-run-git-context session) :dirty))
+
+(defun %session-run-git-status-lines (session)
+  (getf (%session-run-git-context session) :status-lines))
+
+(defun %session-run-git-recent-commits (session)
+  (getf (%session-run-git-context session) :recent-commits))
+
 (defun %session-run-exit-code (session)
   (if (eq (%session-run-execution-status session) :success)
       0
@@ -182,6 +202,11 @@
   (let ((session-path (cl-cc.models:session-permission-snapshot session))
         (input (%session-run-input session))
         (execution-status (%session-run-execution-status session))
+  (git-root (%session-run-git-root session))
+  (git-branch (%session-run-git-branch session))
+  (git-dirty (%session-run-git-dirty session))
+  (git-status-lines (%session-run-git-status-lines session))
+  (git-recent-commits (%session-run-git-recent-commits session))
         (result (%session-run-result-summary session))
         (tool-results (%session-run-tool-results session))
         (selected-tools (%session-run-selected-tools session))
@@ -195,6 +220,11 @@
                     :execution-status execution-status
                     :selected-tools selected-tools
                     :execution-plan execution-plan
+                    :git-root git-root
+                    :git-branch git-branch
+                    :git-dirty git-dirty
+                    :git-status-lines git-status-lines
+                    :git-recent-commits git-recent-commits
                     :result result
                     :tool-results tool-results
                     :session-path session-path

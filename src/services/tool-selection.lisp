@@ -21,7 +21,8 @@
 
 (defparameter +file-edit-tool-keywords+
   '("edit file" "replace in file" "replace text in file" "modify file"
-    "编辑文件" "替换文件" "替换文件内容" "修改文件")
+    "replace all in file" "replace all text in file" "replace all matches in file"
+    "编辑文件" "替换文件" "替换文件内容" "修改文件" "全部替换文件" "替换文件全部命中" "替换文件所有命中")
   "触发 file-edit-tool 优先级的输入关键词。")
 
 (defparameter +directory-list-tool-keywords+
@@ -34,6 +35,80 @@
     "搜索代码" "搜索文本" "查找文本" "在代码中搜索")
   "触发 grep-tool 优先级的输入关键词。")
 
+(defparameter +shell-tool-keywords+
+  '("run shell " "shell " "bash " "execute command " "run command "
+    "执行命令" "运行命令" "执行shell" "运行shell")
+  "触发 shell-tool 优先级的输入关键词。")
+
+(defparameter +shell-task-list-tool-keywords+
+  '("shell task list" "list shell tasks" "list background tasks" "show shell tasks"
+    "running shell task list" "failed shell task list" "completed shell task list" "stopped shell task list"
+    "background task list" "后台任务列表" "列出后台任务" "查看后台任务列表"
+    "列出运行中的后台任务" "列出失败后台任务" "列出已完成后台任务" "列出已停止后台任务")
+  "触发 shell-task-list-tool 优先级的输入关键词。")
+
+(defparameter +shell-task-detail-tool-keywords+
+  '("shell task detail " "background task detail " "show shell task detail "
+    "后台任务详情" "查看后台任务详情" "显示后台任务详情")
+  "触发 shell-task-detail-tool 优先级的输入关键词。")
+
+(defparameter +shell-task-cleanup-tool-keywords+
+  '("cleanup shell tasks" "cleanup background tasks" "prune shell tasks"
+    "cleanup completed shell tasks" "cleanup failed shell tasks" "cleanup stopped shell tasks"
+    "清理后台任务" "清理已完成后台任务" "清理失败后台任务" "清理已停止后台任务")
+  "触发 shell-task-cleanup-tool 优先级的输入关键词。")
+
+(defparameter +shell-task-tool-keywords+
+  '("shell task " "background task "
+    "status shell task " "status background task "
+    "inspect shell task " "inspect background task "
+    "show shell task " "show background task "
+    "interrupt shell task " "interrupt background task "
+    "interrupt shell tasks " "interrupt background tasks "
+    "interrupt task " "interrupt tasks "
+    "sigint shell task " "sigint background task "
+    "sigint shell tasks " "sigint background tasks "
+    "sigint task " "sigint tasks "
+    "ctrl-c shell task " "ctrl-c background task "
+    "ctrl-c shell tasks " "ctrl-c background tasks "
+    "ctrl-c task " "ctrl-c tasks "
+    "ctrl+c shell task " "ctrl+c background task "
+    "ctrl+c shell tasks " "ctrl+c background tasks "
+    "ctrl+c task " "ctrl+c tasks "
+    "stop shell task " "stop background task "
+    "stop shell tasks " "stop background tasks "
+    "kill shell task " "kill background task "
+    "kill shell tasks " "kill background tasks "
+    "terminate shell task " "terminate background task "
+    "terminate shell tasks " "terminate background tasks "
+    "cancel shell task " "cancel background task "
+    "cancel shell tasks " "cancel background tasks "
+    "stop task " "kill task " "terminate task " "cancel task "
+    "stop tasks " "kill tasks " "terminate tasks " "cancel tasks "
+    "wait shell task " "wait background task " "wait task "
+    "wait shell tasks " "wait background tasks " "wait tasks "
+    "join shell task " "join background task " "join task "
+    "join shell tasks " "join background tasks " "join tasks "
+    "await shell task " "await background task " "await task "
+    "await shell tasks " "await background tasks " "await tasks "
+    "后台任务" "停止后台任务" "终止后台任务" "取消后台任务"
+    "中断后台任务" "中断任务" "停止任务" "终止任务" "取消任务" "查询后台任务" "等待后台任务" "等待任务")
+  "触发 shell-task-tool 优先级的输入关键词。")
+
+(defparameter +shell-task-output-tool-keywords+
+  '("shell task output " "background task output " "read shell task output " "tail shell task "
+    "shell task outputs " "background task outputs " "read shell task outputs " "tail shell tasks "
+    "follow shell task output " "follow background task output "
+    "follow shell task outputs " "follow background task outputs "
+    "wait shell task output " "wait background task output "
+    "wait shell task outputs " "wait background task outputs "
+    "wait until finished shell task output " "wait until finished background task output "
+    "wait until finished shell task outputs " "wait until finished background task outputs "
+    "后台任务输出" "查看后台任务输出" "读取后台任务输出"
+    "跟随后台任务输出" "持续查看后台任务输出" "持续读取后台任务输出"
+    "等待后台任务输出" "等待后台任务输出完成" "等待后台任务结束输出")
+  "触发 shell-task-output-tool 优先级的输入关键词。")
+
 (defun %normalized-selection-context (context)
   (or (cl-cc.lib:string-designator-downcase context) ""))
 
@@ -41,23 +116,57 @@
   (loop for keyword in keywords
         thereis (search keyword context :test #'char-equal)))
 
+(defun %planned-tool-input-or-context (thunk context)
+  (handler-case
+      (or (funcall thunk) context)
+    (cl-cc.lib:cl-cc-error () context)))
+
 (defun %planned-tool-input (tool-id context)
   (cond
     ((string= tool-id "grep-tool")
-     (or (cl-cc.tools::%normalized-grep-input context)
-         context))
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-grep-input context))
+      context))
     ((string= tool-id "file-read-tool")
-     (or (cl-cc.tools::%normalized-file-read-input context)
-         context))
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-file-read-input context))
+      context))
     ((string= tool-id "directory-list-tool")
-     (or (cl-cc.tools::%normalized-directory-list-input context)
-         context))
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-directory-list-input context))
+      context))
     ((string= tool-id "file-write-tool")
-     (or (cl-cc.tools::%normalized-file-write-input context)
-         context))
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-file-write-input context))
+      context))
     ((string= tool-id "file-edit-tool")
-     (or (cl-cc.tools::%normalized-file-edit-input context)
-       context))
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-file-edit-input context))
+      context))
+    ((string= tool-id "shell-task-list-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-task-list-input context))
+      context))
+    ((string= tool-id "shell-task-detail-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-task-detail-input context))
+      context))
+    ((string= tool-id "shell-task-cleanup-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-task-cleanup-input context))
+      context))
+    ((string= tool-id "shell-task-output-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-task-output-input context))
+      context))
+    ((string= tool-id "shell-task-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-task-input context))
+      context))
+    ((string= tool-id "shell-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-shell-input context))
+      context))
     (t context)))
 
 (defun %session-execution-steps (tool-ids context)
@@ -75,6 +184,18 @@
   "根据 context 选择工具，优先返回最可能成功的工具。"
   (let ((normalized-context (%normalized-selection-context context)))
     (cond
+      ((%context-contains-keyword-p normalized-context +shell-task-list-tool-keywords+)
+       (list "shell-task-list-tool" "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +shell-task-cleanup-tool-keywords+)
+       (list "shell-task-cleanup-tool" "shell-task-list-tool" "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +shell-task-output-tool-keywords+)
+       (list "shell-task-output-tool" "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +shell-task-detail-tool-keywords+)
+       (list "shell-task-detail-tool" "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +shell-task-tool-keywords+)
+       (list "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +shell-tool-keywords+)
+       (list "shell-tool" "echo-tool" "failing-tool"))
       ((%context-contains-keyword-p normalized-context +grep-tool-keywords+)
        (list "grep-tool" "file-read-tool" "echo-tool" "failing-tool"))
       ((%context-contains-keyword-p normalized-context +file-edit-tool-keywords+)
