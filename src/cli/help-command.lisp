@@ -25,6 +25,31 @@
                                                   (format nil "cl-cc ~{~A~^ ~}" alias))
                                         aliases)))))
 
+(defun %metadata-value-string (value)
+        (typecase value
+                (keyword (string-downcase (symbol-name value)))
+                (symbol (string-downcase (symbol-name value)))
+                (t (format nil "~A" value))))
+
+(defun %command-metadata-parts (definition)
+        (let ((parts nil))
+                (let ((group (cl-cc.models:command-group definition)))
+                        (when group
+                                (push (format nil "group=~A" (%metadata-value-string group)) parts)))
+                (let ((source (cl-cc.models:command-source definition)))
+                        (when source
+                                (push (format nil "source=~A" (%metadata-value-string source)) parts)))
+                (when (cl-cc.models:command-requires-auth-p definition)
+                        (push "requires-auth" parts))
+                (when (cl-cc.models:command-beta-p definition)
+                        (push "beta" parts))
+                (nreverse parts)))
+
+(defun %format-command-help-metadata (definition)
+        (let ((parts (%command-metadata-parts definition)))
+                (when parts
+                        (format nil "    metadata: ~{~A~^; ~}" parts))))
+
 (defun %format-command-reference-usage (definition)
         (let ((usage-tail (cl-cc.core::command-usage-tail definition)))
                 (if (> (length usage-tail) 0)
@@ -38,6 +63,11 @@
                                 (mapcar (lambda (alias)
                                                   (format nil "cl-cc ~{~A~^ ~}" alias))
                                         aliases)))))
+
+(defun %format-command-reference-metadata (definition)
+        (let ((parts (%command-metadata-parts definition)))
+                (when parts
+                        (format nil "~{`~A`~^, ~}" parts))))
 
 (defun %plist-property (plist key)
         (cl-cc.services::%plist-property plist key))
@@ -255,6 +285,62 @@
                 (when permission-profile
                         (format nil "`~(~A~)`" permission-profile))))
 
+(defun %command-auth-scope-matches-p (definition auth-scope)
+        (case auth-scope
+                (:all t)
+                (:requires-auth (cl-cc.models:command-requires-auth-p definition))
+                (:public (not (cl-cc.models:command-requires-auth-p definition)))
+                (t (error "Unknown command auth scope: ~S" auth-scope))))
+
+(defun %command-group-scope-matches-p (definition group-scope)
+        (or (eq group-scope :all)
+            (equal (cl-cc.models:command-group definition) group-scope)))
+
+(defun %command-group-scope-keyword (value)
+        (cond
+                ((or (null value)
+                     (string= value "all")) :all)
+                ((string= value "meta") :meta)
+                ((string= value "chat") :chat)
+                ((string= value "session") :session)
+                ((string= value "automation") :automation)
+                ((string= value "docs") :docs)
+                (t (error "Unknown command group scope option: ~S" value))))
+
+(defun %displayed-command-definitions (&key (auth-scope :all) (group-scope :all))
+        (remove-if-not (lambda (definition)
+                                 (and (not (cl-cc.models:command-hidden-p definition))
+                                      (%command-auth-scope-matches-p definition auth-scope)
+                                      (%command-group-scope-matches-p definition group-scope)))
+                       (cl-cc.core:list-command-definitions)))
+
+(defun %command-group-order (group)
+        (or (position group '(:meta :chat :session :automation :docs) :test #'eq)
+            most-positive-fixnum))
+
+(defun %command-group-heading (group)
+        (case group
+                (:meta "元信息命令")
+                (:chat "交互命令")
+                (:session "会话命令")
+                (:automation "自动化命令")
+                (:docs "文档命令")
+                (t (format nil "~A 命令" (%metadata-value-string (or group :other))))))
+
+(defun %command-grouped-definitions (&key (auth-scope :all) (group-scope :all))
+        (let ((groups nil))
+                (dolist (definition (%displayed-command-definitions :auth-scope auth-scope
+                                                                   :group-scope group-scope))
+                        (let* ((group (cl-cc.models:command-group definition))
+                               (entry (assoc group groups :test #'equal)))
+                                (if entry
+                                        (setf (cdr entry) (append (cdr entry) (list definition)))
+                                        (setf groups (append groups (list (cons group (list definition))))))))
+                (sort groups
+                      (lambda (left right)
+                                (< (%command-group-order (car left))
+                                   (%command-group-order (car right)))))))
+
 (defun %write-schema-section (stream label schema &optional json-fields-label)
         (let ((schema-line (%format-schema-summary schema))
               (json-field-lines (%format-schema-json-field-lines schema)))
@@ -289,24 +375,30 @@
                         (dolist (line option-lines)
                                 (format stream "~A~%" line)))))
 
-(defun render-command-reference-markdown ()
+(defun render-command-reference-markdown (&key (auth-scope :all) (group-scope :all))
         (cl-cc.core:ensure-default-commands)
         (with-output-to-string (stream)
                 (format stream "## 命令参考~%~%")
-                (dolist (definition (cl-cc.core:list-command-definitions))
-                        (format stream "### `~A`~%~%" (cl-cc.models:command-name definition))
-                        (format stream "- Usage: ~A~%" (%format-command-reference-usage definition))
-                        (format stream "- Summary: ~A~%" (cl-cc.models:command-summary definition))
-                        (let ((aliases-line (%format-command-reference-aliases definition)))
-                                (when aliases-line
-                                        (format stream "- Aliases: ~A~%" aliases-line)))
-                        (%write-schema-section stream "Output Schema" (cl-cc.models:command-output-schema definition) "JSON Fields")
-                        (let ((option-lines (cl-cc.core::command-option-help-lines definition)))
-                                (when option-lines
-                                        (format stream "- Options:~%")
-                                        (dolist (line option-lines)
-                                                (format stream "  - ~A~%" (string-trim '(#\Space) line)))))
-                        (format stream "~%"))
+                (dolist (group (%command-grouped-definitions :auth-scope auth-scope
+                                                            :group-scope group-scope))
+                        (format stream "### ~A~%~%" (%command-group-heading (car group)))
+                        (dolist (definition (cdr group))
+                                (format stream "#### `~A`~%~%" (cl-cc.models:command-name definition))
+                                (format stream "- Usage: ~A~%" (%format-command-reference-usage definition))
+                                (format stream "- Summary: ~A~%" (cl-cc.models:command-summary definition))
+                                (let ((aliases-line (%format-command-reference-aliases definition)))
+                                        (when aliases-line
+                                                (format stream "- Aliases: ~A~%" aliases-line)))
+                                (let ((metadata-line (%format-command-reference-metadata definition)))
+                                        (when metadata-line
+                                                (format stream "- Metadata: ~A~%" metadata-line)))
+                                (%write-schema-section stream "Output Schema" (cl-cc.models:command-output-schema definition) "JSON Fields")
+                                (let ((option-lines (cl-cc.core::command-option-help-lines definition)))
+                                        (when option-lines
+                                                (format stream "- Options:~%")
+                                                (dolist (line option-lines)
+                                                        (format stream "  - ~A~%" (string-trim '(#\Space) line)))))
+                                (format stream "~%")))
                 (format stream "~A" (render-tool-reference-markdown))))
 
 (defun %replace-command-reference-section (contents rendered-reference)
@@ -325,26 +417,51 @@
         (%replace-command-reference-section (uiop:read-file-string path)
                                             (render-command-reference-markdown)))
 
-(defun %command-reference-sync-state (path)
+(defun %command-auth-scope-keyword (value)
+        (cond
+                ((or (null value)
+                     (string= value "all")) :all)
+                ((string= value "public") :public)
+                ((string= value "requires-auth") :requires-auth)
+                (t (error "Unknown command auth scope option: ~S" value))))
+
+(defun %command-reference-sync-state (path &key (auth-scope :all) (group-scope :all))
         (let* ((current-contents (uiop:read-file-string path))
                (updated-contents (%replace-command-reference-section current-contents
-                                                                    (render-command-reference-markdown)))
+                                                                    (render-command-reference-markdown :auth-scope auth-scope
+                                                                                                      :group-scope group-scope)))
                (needs-sync (not (string= current-contents updated-contents))))
                 (values needs-sync updated-contents)))
 
-(defun sync-command-reference-file (&optional (path "README.md"))
+(defun %parse-command-reference-sync-arguments (args)
+        (let ((path "README.md")
+              (remaining args))
+                (when (and remaining
+                           (stringp (first remaining)))
+                        (setf path (first remaining)
+                              remaining (rest remaining)))
+                (values path
+                        (or (getf remaining :auth-scope) :all)
+                        (or (getf remaining :group-scope) :all))))
+
+(defun sync-command-reference-file (&rest args)
+        (multiple-value-bind (path auth-scope group-scope)
+                (%parse-command-reference-sync-arguments args)
         (multiple-value-bind (needs-sync updated-contents)
-                (%command-reference-sync-state path)
+                (%command-reference-sync-state path :auth-scope auth-scope :group-scope group-scope)
                 (when needs-sync
                         (with-open-file (stream path
                                                 :direction :output
                                                 :if-exists :supersede
                                                 :if-does-not-exist :create)
                                 (write-string updated-contents stream)))
-                path))
+                path)))
 
-(defun command-reference-file-needs-sync-p (&optional (path "README.md"))
-        (nth-value 0 (%command-reference-sync-state path)))
+(defun command-reference-file-needs-sync-p (&rest args)
+        (multiple-value-bind (path auth-scope group-scope)
+                (%parse-command-reference-sync-arguments args)
+                (nth-value 0 (%command-reference-sync-state path :auth-scope auth-scope
+                                                            :group-scope group-scope))))
 
 (defun %make-docs-sync-result (path status check-only updated needs-sync duration-seconds exit-code)
         (cl-cc.lib:make-result :status (cl-cc.lib:string-designator-keyword status)
@@ -366,10 +483,15 @@
         (declare (ignore argv))
         (let ((path (or (cl-cc.core:command-positional-argument parsed-arguments 0) "README.md"))
               (check-only (cl-cc.core:command-option-value parsed-arguments :check-only nil))
-              (output-format (cl-cc.core:command-option-value parsed-arguments :output-format "text")))
+              (output-format (cl-cc.core:command-option-value parsed-arguments :output-format "text"))
+              (auth-scope (%command-auth-scope-keyword
+                           (cl-cc.core:command-option-value parsed-arguments :auth-scope "all")))
+              (group-scope (%command-group-scope-keyword
+                            (cl-cc.core:command-option-value parsed-arguments :group-scope "all"))))
                 (let ((started-at (get-internal-real-time)))
                         (multiple-value-bind (needs-sync updated-contents)
-                                        (%command-reference-sync-state path)
+                                        (%command-reference-sync-state path :auth-scope auth-scope
+                                                                           :group-scope group-scope)
                                         (declare (ignore updated-contents))
                                         (cond
                                                 (check-only
@@ -384,7 +506,8 @@
                                                                     (cl-cc.lib:result-message result-object)))
                                                         exit-code))
                                                 (needs-sync
-                                                 (sync-command-reference-file path)
+                                                 (sync-command-reference-file path :auth-scope auth-scope
+                                                                                 :group-scope group-scope)
                                                  (let ((result-object (%make-docs-sync-result path "synced" nil t nil
                                                                                               (cl-cc.lib:elapsed-seconds started-at (get-internal-real-time))
                                                                                               0)))
@@ -403,22 +526,32 @@
                                                                (cl-cc.lib:result-message result-object))))
                                                  0))))))
 
-(defun render-help ()
+(defun render-help (&key (auth-scope :all) (group-scope :all))
         (cl-cc.core:ensure-default-commands)
         (with-output-to-string (stream)
                 (format stream "Usage:~%")
-                (dolist (definition (cl-cc.core:list-command-definitions))
-                        (format stream "~A~%" (%format-command-usage definition))
-                        (format stream "    ~A~%" (cl-cc.models:command-summary definition))
-                        (let ((aliases-line (%format-command-aliases definition)))
-                                (when aliases-line
-                                        (format stream "~A~%" aliases-line)))
-                        (%write-command-options stream definition))))
+                (dolist (group (%command-grouped-definitions :auth-scope auth-scope
+                                                            :group-scope group-scope))
+                        (format stream "~%  ~A:~%" (%command-group-heading (car group)))
+                        (dolist (definition (cdr group))
+                                (format stream "~A~%" (%format-command-usage definition))
+                                (format stream "    ~A~%" (cl-cc.models:command-summary definition))
+                                (let ((aliases-line (%format-command-aliases definition)))
+                                        (when aliases-line
+                                                (format stream "~A~%" aliases-line)))
+                                (let ((metadata-line (%format-command-help-metadata definition)))
+                                        (when metadata-line
+                                                (format stream "~A~%" metadata-line)))
+                                (%write-command-options stream definition)))))
 
 (defun print-help ()
         (format t "~A" (render-help)))
 
 (defun handle-help-command (&optional argv parsed-arguments)
-        (declare (ignore argv parsed-arguments))
-        (print-help)
+        (declare (ignore argv))
+        (format t "~A"
+                (render-help :auth-scope (%command-auth-scope-keyword
+                                          (cl-cc.core:command-option-value parsed-arguments :auth-scope "all"))
+                             :group-scope (%command-group-scope-keyword
+                                           (cl-cc.core:command-option-value parsed-arguments :group-scope "all"))))
         0)

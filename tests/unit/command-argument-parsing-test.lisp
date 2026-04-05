@@ -104,9 +104,13 @@
                                                           '("docs" "sync-reference")
                                                           '("docs" "sync-reference"
                                                             "README.md"
+                                                            "--auth-scope" "public"
+                                                            "--group-scope" "docs"
                                                             "--output-format" "json"))))
     (is (equal (cl-cc.core:command-positional-arguments parsed)
                '("README.md")))
+    (is (string= (cl-cc.core:command-option-value parsed :auth-scope) "public"))
+    (is (string= (cl-cc.core:command-option-value parsed :group-scope) "docs"))
     (is (string= (cl-cc.core:command-option-value parsed :output-format) "json"))))
 
 (test session-run-parses-repeatable-tool-overrides

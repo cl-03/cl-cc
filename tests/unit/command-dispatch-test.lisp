@@ -14,6 +14,8 @@
   (is (string= (cl-cc.core:command-key-from-argv '("-h")) "help"))
   (is (string= (cl-cc.core:command-key-from-argv '("session" "start")) "session start"))
   (is (string= (cl-cc.core:command-key-from-argv '("s" "start")) "session start"))
+  (is (string= (cl-cc.core:command-key-from-argv '("session" "list")) "session list"))
+  (is (string= (cl-cc.core:command-key-from-argv '("s" "list")) "session list"))
   (is (string= (cl-cc.core:command-key-from-argv '("session" "resume" "abc")) "session resume"))
   (is (string= (cl-cc.core:command-key-from-argv '("s" "resume" "abc")) "session resume"))
   (is (string= (cl-cc.core:command-key-from-argv '("session" "run" "abc")) "session run"))
@@ -28,12 +30,38 @@
     (is (string= (cl-cc.models:command-summary definition) "显示 CLI 帮助")))
   (let ((output (capture-output (lambda () (cl-cc:main "--help")))))
     (is (search "Usage:" output))
+    (is (search "help [--auth-scope <auth-scope>] [--group-scope <group-scope>]" output))
     (is (search "chat [<session-id-or-path>] [--session-path <session-path>] [--session-id <session-id>] [--tool <tool-id>]" output))
-    (is (search "docs sync-reference [<output-path>] [--check] [--output-format <output-format>]" output))
+    (is (search "docs sync-reference [<output-path>] [--check] [--auth-scope <auth-scope>] [--group-scope <group-scope>] [--output-format <output-format>]" output))
     (is (search "run --fixture <fixture-id>... [--output-format <output-format>]" output))
+    (is (search "session list [--session-dir <session-dir>] [--output-format <output-format>]" output))
     (is (search "session start [--session-id <session-id>] [--session-path <session-path>] [--history-index <history-index>]" output))
     (is (search "[default: text]" output))
     (is (search "[requires: --output-format=json]" output))))
+
+(test help-and-docs-sync-support-group-scope-through-registry
+  (let ((help-output (capture-output (lambda () (cl-cc:main "help" "--group-scope" "session")))))
+    (is (search "会话命令:" help-output))
+    (is (not (search "元信息命令:" help-output)))
+    (is (search "cl-cc session list" help-output))
+    (is (not (search "cl-cc help" help-output))))
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "generated-reference-group-test.md"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "before~%<!-- BEGIN GENERATED COMMAND REFERENCE -->~%old~%<!-- END GENERATED COMMAND REFERENCE -->~%after~%")
+                           stream))
+           (let ((output (capture-output (lambda () (cl-cc:main "docs" "sync" path "--group-scope" "session")))))
+             (is (search "命令参考已同步" output)))
+           (let ((contents (uiop:read-file-string path)))
+             (is (search "#### `session start`" contents))
+             (is (search "#### `session list`" contents))
+             (is (not (search "#### `help`" contents)))
+             (is (not (search "#### `docs sync-reference`" contents)))))
+      (when (probe-file path)
+        (delete-file path)))))
 
 (test docs-sync-reference-through-registry
   (let ((path (uiop:native-namestring
@@ -51,6 +79,25 @@
              (is (search "### `run --fixture`" contents))
              (is (search "before" contents))
              (is (search "after" contents))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test docs-sync-reference-can-render-public-command-reference
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "generated-reference-public-test.md"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "before~%<!-- BEGIN GENERATED COMMAND REFERENCE -->~%old~%<!-- END GENERATED COMMAND REFERENCE -->~%after~%")
+                           stream))
+           (let ((output (capture-output (lambda () (cl-cc:main "docs" "sync" path "--auth-scope" "public")))))
+             (is (search "命令参考已同步" output)))
+           (let ((contents (uiop:read-file-string path)))
+             (is (search "#### `help`" contents))
+             (is (search "#### `docs sync-reference`" contents))
+             (is (not (search "#### `chat`" contents)))
+             (is (not (search "#### `run --fixture`" contents)))))
       (when (probe-file path)
         (delete-file path)))))
 
@@ -222,6 +269,7 @@
   (is (= (cl-cc:main "chat" "--unknown") 1))
   (is (= (cl-cc:main "session" "start" "--unknown") 1))
   (is (= (cl-cc:main "session" "start" "--output-format" "xml") 1))
+  (is (= (cl-cc:main "session" "list" "--output-format" "xml") 1))
   (is (= (cl-cc:main "session" "resume" "resume-user" "--output-format" "xml") 1))
   (is (= (cl-cc:main "session" "run" "resume-user" "--output-format" "xml") 1))
   (is (= (cl-cc:main "run" "--fixture" "test" "--output-format=xml") 1))
@@ -268,6 +316,38 @@
            (is (probe-file path)))
       (when (probe-file path)
         (delete-file path))))
+  (let* ((directory (uiop:ensure-directory-pathname
+                     (uiop:merge-pathnames* "command-dispatch-session-list-test/"
+                                            (uiop:temporary-directory))))
+         (path (uiop:native-namestring (merge-pathnames "listed.session" directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory)
+           (is (cl-cc.session:save-session
+                (make-instance 'cl-cc.models:session-state
+                               :session-id "listed-session"
+                               :created-at "2026-04-05T03:00:00Z"
+                               :updated-at "2026-04-05T03:05:00Z"
+                               :history-index 2
+                               :context-summary '(:input "dispatch input" :result "dispatch result")
+                               :tasks '((:task-id "shell-task-7"))
+                               :permission-snapshot path
+                               :status :active
+                               :version "0.1")
+                path))
+           (let ((output (capture-output (lambda () (cl-cc:main "session" "list" "--session-dir" (uiop:native-namestring directory))))))
+             (is (search "会话数量: 1" output))
+             (is (search "listed-session" output))
+             (is (search "listed.session" output)))
+           (let ((output (capture-output (lambda () (cl-cc:main "session" "list" "--session-dir" (uiop:native-namestring directory) "--output-format" "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"sessionDirectory\":" output))
+             (is (search "\"usedDefaultDirectory\":false" output))
+             (is (search "\"sessionCount\":1" output))
+             (is (search "\"sessionId\":\"listed-session\"" output))
+             (is (search "\"taskCount\":1" output))))
+      (when (probe-file directory)
+        (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore))))
   (let ((output (capture-output (lambda () (cl-cc:main "session" "resume" "resume-user")))))
     (is (search "会话已恢复: resume-user" output)))
   (let ((output (capture-output (lambda () (cl-cc:main "session" "resume" "resume-user" "--output-format" "json")))))

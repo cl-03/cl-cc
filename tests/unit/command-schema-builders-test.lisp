@@ -31,7 +31,7 @@
     (is (string= (getf schema :text) "session start message"))
     (is (getf schema :closed))
     (is (equal (mapcar (lambda (field) (getf field :name)) json-fields)
-               '("status" "sessionId" "historyIndex" "sessionStatus"
+               '("status" "sessionId" "historyIndex" "sessionStatus" "tasks"
                  "sessionPath" "saved" "durationSeconds" "exitCode")))))
 
 (test session-output-schema-builders-support-no-extra-fields
@@ -44,17 +44,39 @@
     (is (string= (getf schema :text) "session resume message"))
     (is (getf schema :closed))
     (is (equal (mapcar (lambda (field) (getf field :name)) json-fields)
-               '("status" "sessionId" "historyIndex" "sessionStatus"
+               '("status" "sessionId" "historyIndex" "sessionStatus" "tasks"
                  "durationSeconds" "exitCode")))))
+
+(test session-list-output-schema-builder-retains-metadata-shape
+  (let* ((schema (cl-cc.core::%session-list-command-output-schema))
+         (json-fields (getf schema :json))
+         (sessions-field (find "sessions" json-fields :key (lambda (field) (getf field :name)) :test #'string=)))
+    (is (string= (getf schema :text) "session list message"))
+    (is (getf schema :closed))
+    (is (equal (mapcar (lambda (field) (getf field :name)) json-fields)
+               '("status" "sessionDirectory" "usedDefaultDirectory" "sessionCount" "sessions" "durationSeconds" "exitCode")))
+    (is (equal (mapcar (lambda (field) (getf field :name)) (getf sessions-field :fields))
+               '("sessionId" "sessionPath" "createdAt" "updatedAt" "historyIndex" "sessionStatus" "taskCount" "lastInput" "lastResult" "fileSizeBytes" "fileUpdatedAt" "version")))))
 
 (test docs-sync-status-and-check-option-builders-stay-stable
   (let ((status-field (cl-cc.core::%docs-sync-status-schema-field))
-        (check-option (cl-cc.core::%docs-sync-reference-check-option)))
+    (check-option (cl-cc.core::%docs-sync-reference-check-option))
+    (auth-scope-option (cl-cc.core::%docs-sync-reference-auth-scope-option))
+    (group-scope-option (cl-cc.core::%docs-sync-reference-group-scope-option)))
     (is (equal (getf status-field :name) "status"))
     (is (equal (getf status-field :enum) '("synced" "in-sync" "drift")))
     (is (equal (getf check-option :flags) '("--check")))
     (is (eq (getf check-option :key) :check-only))
-    (is (getf check-option :flag))))
+  (is (getf check-option :flag))
+  (is (equal (getf auth-scope-option :flags) '("--auth-scope")))
+  (is (eq (getf auth-scope-option :key) :auth-scope))
+  (is (equal (getf auth-scope-option :type) '(:enum "all" "public" "requires-auth")))
+  (is (string= (getf auth-scope-option :default) "all"))
+  (is (equal (getf group-scope-option :flags) '("--group-scope")))
+  (is (eq (getf group-scope-option :key) :group-scope))
+  (is (equal (getf group-scope-option :type)
+         '(:enum "all" "meta" "chat" "session" "automation" "docs")))
+  (is (string= (getf group-scope-option :default) "all"))))
 
 (test positional-and-check-option-builders-stay-stable
   (let ((resume-positional (cl-cc.core::%single-required-positional "<session-id-or-path>"))
@@ -79,11 +101,14 @@
 (test value-option-builders-preserve-types
   (let ((session-id-option (cl-cc.core::%session-id-option))
         (history-index-option (cl-cc.core::%history-index-option))
-        (tool-ids-option (cl-cc.core::%tool-ids-option)))
+    (tool-ids-option (cl-cc.core::%tool-ids-option))
+    (session-dir-option (cl-cc.core::%session-dir-option)))
     (is (equal (getf session-id-option :flags) '("-i" "--session-id")))
     (is (eq (getf session-id-option :type) :string))
     (is (equal (getf history-index-option :flags) '("--history-index")))
     (is (eq (getf history-index-option :type) :integer))
+  (is (equal (getf session-dir-option :flags) '("--session-dir")))
+  (is (eq (getf session-dir-option :type) :string))
     (is (equal (getf tool-ids-option :flags) '("-t" "--tool")))
     (is (eq (getf tool-ids-option :type) :string))
     (is (getf tool-ids-option :repeatable))))

@@ -18,6 +18,30 @@
   (expect-command-json-output-valid
    "session start"
    (capture-output (lambda () (cl-cc:handle-session-start "json-session" 2 "json"))))
+    (let* ((directory (uiop:ensure-directory-pathname
+           (uiop:merge-pathnames* "session-list-json-output-contract-test/"
+                      (uiop:temporary-directory))))
+        (path (uiop:native-namestring (merge-pathnames "listed.session" directory))))
+      (unwind-protect
+        (progn
+       (ensure-directories-exist directory)
+       (is (cl-cc.session:save-session
+         (make-instance 'cl-cc.models:session-state
+               :session-id "json-listed"
+               :created-at "2026-04-05T05:00:00Z"
+               :updated-at "2026-04-05T05:05:00Z"
+               :history-index 1
+               :context-summary '(:input "contract input" :result "contract result")
+               :tasks nil
+               :permission-snapshot path
+               :status :active
+               :version "0.1")
+         path))
+       (expect-command-json-output-valid
+        "session list"
+        (capture-output (lambda () (cl-cc:handle-session-list (uiop:native-namestring directory) "json")))))
+     (when (probe-file directory)
+       (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore))))
   (expect-command-json-output-valid
    "session resume"
     (capture-output (lambda () (cl-cc:handle-session-resume "resume-user" "json"))))
@@ -42,7 +66,13 @@
             (capture-output (lambda () (cl-cc:main "docs" "sync" path "--check" "--output-format" "json"))))
            (expect-command-json-output-valid
             "docs sync-reference"
-            (capture-output (lambda () (cl-cc:main "docs" "sync" path "--output-format" "json")))))
+            (capture-output (lambda () (cl-cc:main "docs" "sync" path "--output-format" "json"))))
+           (expect-command-json-output-valid
+            "docs sync-reference"
+            (capture-output (lambda () (cl-cc:main "docs" "sync" path "--auth-scope" "public" "--output-format" "json"))))
+           (expect-command-json-output-valid
+            "docs sync-reference"
+            (capture-output (lambda () (cl-cc:main "docs" "sync" path "--group-scope" "session" "--output-format" "json")))))
       (when (probe-file path)
         (delete-file path)))))
 

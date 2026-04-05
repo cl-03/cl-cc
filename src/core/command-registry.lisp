@@ -3,7 +3,7 @@
 
 (defparameter *command-registry* (make-hash-table :test 'equal))
 
-(defun %make-command-definition (name handler-symbol &key aliases summary permission-profile arguments-schema output-schema)
+(defun %make-command-definition (name handler-symbol &key aliases summary permission-profile arguments-schema output-schema group source hidden-p beta-p requires-auth-p)
   (make-instance 'cl-cc.models:command-definition
                  :name name
                  :aliases aliases
@@ -11,13 +11,18 @@
                  :output-schema output-schema
                  :summary summary
                  :handler-symbol handler-symbol
-                 :permission-profile permission-profile))
+                 :permission-profile permission-profile
+                 :group group
+                 :source source
+                 :hidden-p hidden-p
+                 :beta-p beta-p
+                 :requires-auth-p requires-auth-p))
 
 (defun reset-command-registry ()
   "清空命令注册表。"
   (clrhash *command-registry*))
 
-(defun register-command (name-or-definition handler-symbol &key aliases summary permission-profile arguments-schema output-schema)
+(defun register-command (name-or-definition handler-symbol &key aliases summary permission-profile arguments-schema output-schema group source hidden-p beta-p requires-auth-p)
   "注册命令定义到注册表。"
   (let ((definition (if (typep name-or-definition 'cl-cc.models:command-definition)
                         name-or-definition
@@ -27,7 +32,12 @@
                                                   :summary summary
                                                   :permission-profile permission-profile
                                                   :arguments-schema arguments-schema
-                                                  :output-schema output-schema))))
+                                                  :output-schema output-schema
+                                                  :group group
+                                                  :source source
+                                                  :hidden-p hidden-p
+                                                  :beta-p beta-p
+                                                  :requires-auth-p requires-auth-p))))
     (setf (gethash (cl-cc.models:command-name definition) *command-registry*) definition)
     definition))
 
@@ -52,7 +62,9 @@
     (and definition (symbol-function (cl-cc.models:command-handler-symbol definition)))))
 
 (defun %help-command-arguments-schema ()
-  '(:positionals nil :options nil))
+  `(:positionals nil
+    :options (,(%help-auth-scope-option)
+              ,(%help-group-scope-option))))
 
 (defun %help-command-output-schema ()
   '(:text "CLI help text"))
@@ -60,6 +72,8 @@
 (defun %docs-sync-reference-arguments-schema ()
   `(:positionals ((:name "<output-path>" :required nil))
     :options (,(%docs-sync-reference-check-option)
+              ,(%docs-sync-reference-auth-scope-option)
+              ,(%docs-sync-reference-group-scope-option)
               ,(%output-format-option))))
 
 (defun %docs-sync-reference-output-schema ()
@@ -76,6 +90,8 @@
   (define-command "help" 'cl-cc::handle-help-command
     (:aliases '(("--help") ("-h") ("help")))
     (:summary "显示 CLI 帮助")
+    (:group :meta)
+    (:source :builtin)
     (:permission-profile :default)
     (:arguments-schema (%help-command-arguments-schema))
     (:output-schema (%help-command-output-schema))))
@@ -84,6 +100,8 @@
   (define-command "docs sync-reference" 'cl-cc::handle-docs-sync-reference-command
     (:aliases '(("docs" "sync")))
     (:summary "将生成的命令参考同步到指定 Markdown 文件，或以 text/json 形式检查漂移")
+    (:group :docs)
+    (:source :builtin)
     (:permission-profile :default)
     (:arguments-schema (%docs-sync-reference-arguments-schema))
     (:output-schema (%docs-sync-reference-output-schema))))
@@ -102,6 +120,14 @@
                           "会话状态，当前通常为 active"
                           "本次 session start 执行时长（秒）"
                           :extra-fields (%session-persistence-output-fields)))
+
+(defun %session-list-arguments-schema ()
+  `(:positionals nil
+    :options (,(%session-dir-option)
+              ,(%output-format-option))))
+
+(defun %session-list-output-schema ()
+  (%session-list-command-output-schema))
 
 (defun %session-resume-arguments-schema ()
   `(:positionals (,(%single-required-positional "<session-id-or-path>"))
@@ -149,14 +175,28 @@
   (define-command "session start" 'cl-cc::handle-session-start-command
     (:aliases '(("s" "start")))
     (:summary "启动新会话")
+    (:group :session)
+    (:source :builtin)
     (:permission-profile :default)
     (:arguments-schema (%session-start-arguments-schema))
     (:output-schema (%session-start-output-schema))))
+
+(defun %register-session-list-command ()
+  (define-command "session list" 'cl-cc::handle-session-list-command
+    (:aliases '(("s" "list")))
+    (:summary "列出可发现的会话快照")
+    (:group :session)
+    (:source :builtin)
+    (:permission-profile :default)
+    (:arguments-schema (%session-list-arguments-schema))
+    (:output-schema (%session-list-output-schema))))
 
 (defun %register-session-resume-command ()
   (define-command "session resume" 'cl-cc::handle-session-resume-command
     (:aliases '(("s" "resume")))
     (:summary "恢复已有会话")
+    (:group :session)
+    (:source :builtin)
     (:permission-profile :default)
     (:arguments-schema (%session-resume-arguments-schema))
     (:output-schema (%session-resume-output-schema))))
@@ -165,6 +205,9 @@
   (define-command "session run" 'cl-cc::handle-session-run-command
     (:aliases '(("s" "run")))
     (:summary "恢复会话并执行一步最小 session loop，可携带用户输入")
+    (:group :session)
+    (:source :builtin)
+    (:requires-auth-p t)
     (:permission-profile :default)
     (:arguments-schema (%session-run-arguments-schema))
     (:output-schema (%session-run-output-schema))))
@@ -173,12 +216,16 @@
   (define-command "chat" 'cl-cc::handle-chat-command
     (:aliases '(("c")))
     (:summary "启动最小交互式会话 shell")
+    (:group :chat)
+    (:source :builtin)
+    (:requires-auth-p t)
     (:permission-profile :default)
     (:arguments-schema (%chat-arguments-schema))
     (:output-schema (%chat-output-schema))))
 
 (defun %register-session-commands ()
   (%register-session-start-command)
+  (%register-session-list-command)
   (%register-session-resume-command)
   (%register-session-run-command))
 
@@ -197,6 +244,9 @@
   (define-command "run --fixture" 'cl-cc::handle-run-fixture-command
     (:aliases '(("r" "--fixture")))
     (:summary "执行 fixture 驱动的脚本化请求")
+    (:group :automation)
+    (:source :builtin)
+    (:requires-auth-p t)
     (:permission-profile :default)
     (:arguments-schema (%run-fixture-arguments-schema))
     (:output-schema (%run-fixture-output-schema))))

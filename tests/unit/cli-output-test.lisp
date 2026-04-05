@@ -14,15 +14,35 @@
               (setf exit-code (apply #'cl-cc:main argv)))))
     (values exit-code stderr)))
 
+(defun %session-tool-result-json-section (output tool-id)
+  (let ((marker (format nil "\"toolId\":~A" (cl-cc::%cli-json-string tool-id))))
+    (or (let ((start (search marker output)))
+          (and start (subseq output start)))
+        output)))
+
 (test main-help-output
   (let ((output (capture-output (lambda () (cl-cc:main "--help")))))
     (is (search "Usage:" output))
+    (is (search "元信息命令:" output))
+    (is (search "交互命令:" output))
+    (is (search "会话命令:" output))
+    (is (search "自动化命令:" output))
+    (is (search "文档命令:" output))
+    (is (search "help [--auth-scope <auth-scope>] [--group-scope <group-scope>]" output))
     (is (search "chat [<session-id-or-path>] [--session-path <session-path>] [--session-id <session-id>] [--tool <tool-id>]" output))
-    (is (search "docs sync-reference [<output-path>] [--check] [--output-format <output-format>]" output))
+    (is (search "metadata: group=meta; source=builtin" output))
+    (is (search "metadata: group=chat; source=builtin; requires-auth" output))
+    (is (search "docs sync-reference [<output-path>] [--check] [--auth-scope <auth-scope>] [--group-scope <group-scope>] [--output-format <output-format>]" output))
+    (is (search "metadata: group=docs; source=builtin" output))
+    (is (search "session list [--session-dir <session-dir>] [--output-format <output-format>]" output))
     (is (search "session start [--session-id <session-id>] [--session-path <session-path>] [--history-index <history-index>]" output))
     (is (search "run --fixture <fixture-id>... [--output-format <output-format>]" output))
+    (is (search "metadata: group=automation; source=builtin; requires-auth" output))
+    (is (search "metadata: group=session; source=builtin; requires-auth" output))
     (is (search "aliases: cl-cc r --fixture" output))
     (is (search "options:" output))
+    (is (search "--auth-scope <auth-scope>" output))
+    (is (search "--group-scope <group-scope>" output))
     (is (search "--check" output))
     (is (search "--output-format <output-format>" output))
     (is (search "-i, --session-id <session-id>" output))
@@ -31,9 +51,140 @@
     (is (search "--compact" output))
     (is (search "-t, --tool <tool-id>" output))))
 
+(test main-help-output-can-filter-session-group
+  (let ((output (capture-output (lambda () (cl-cc:main "help" "--group-scope" "session")))))
+    (is (search "会话命令:" output))
+    (is (not (search "元信息命令:" output)))
+    (is (not (search "交互命令:" output)))
+    (is (not (search "文档命令:" output)))
+    (is (search "cl-cc session start" output))
+    (is (search "cl-cc session list" output))
+    (is (search "cl-cc session resume" output))
+    (is (search "cl-cc session run" output))
+    (is (not (search "cl-cc help" output)))))
+
+(test docs-sync-json-output-contract-remains-valid-with-group-scope-filter
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "generated-reference-group-json-test.md"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "before~%<!-- BEGIN GENERATED COMMAND REFERENCE -->~%old~%<!-- END GENERATED COMMAND REFERENCE -->~%after~%")
+                           stream))
+           (let ((output (capture-output (lambda () (cl-cc:main "docs" "sync" path "--group-scope" "session" "--output-format" "json")))))
+             (is (search "\"status\":\"synced\"" output))
+             (is (search "\"checkOnly\":false" output))
+             (is (search "\"updated\":true" output))
+             (is (search "\"needsSync\":false" output))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test docs-sync-json-output-contract-remains-valid-with-auth-scope-filter
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "generated-reference-public-json-test.md"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "before~%<!-- BEGIN GENERATED COMMAND REFERENCE -->~%old~%<!-- END GENERATED COMMAND REFERENCE -->~%after~%")
+                           stream))
+           (let ((output (capture-output (lambda () (cl-cc:main "docs" "sync" path "--auth-scope" "public" "--output-format" "json")))))
+             (is (search "\"status\":\"synced\"" output))
+             (is (search "\"checkOnly\":false" output))
+             (is (search "\"updated\":true" output))
+             (is (search "\"needsSync\":false" output))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test main-help-output-can-filter-public-commands
+  (let ((output (capture-output (lambda () (cl-cc:main "help" "--auth-scope" "public")))))
+    (is (search "元信息命令:" output))
+    (is (search "会话命令:" output))
+    (is (search "文档命令:" output))
+    (is (not (search "交互命令:" output)))
+    (is (not (search "自动化命令:" output)))
+    (is (search "cl-cc help [--auth-scope <auth-scope>] [--group-scope <group-scope>]" output))
+    (is (search "cl-cc docs sync-reference" output))
+    (is (search "cl-cc session list" output))
+    (is (not (search "cl-cc chat" output)))
+    (is (not (search "cl-cc run --fixture" output)))))
+
+(test main-help-output-can-filter-requires-auth-commands-through-help-alias
+  (let ((output (capture-output (lambda () (cl-cc:main "--help" "--auth-scope" "requires-auth")))))
+    (is (search "交互命令:" output))
+    (is (search "会话命令:" output))
+    (is (search "自动化命令:" output))
+    (is (not (search "元信息命令:" output)))
+    (is (not (search "文档命令:" output)))
+    (is (search "cl-cc chat" output))
+    (is (search "cl-cc session run" output))
+    (is (search "cl-cc run --fixture" output))
+    (is (not (search "cl-cc help [--auth-scope <auth-scope>] [--group-scope <group-scope>]" output)))
+    (is (not (search "cl-cc docs sync-reference" output)))))
+
 (test session-start-output
   (let ((output (capture-output (lambda () (cl-cc:handle-session-start)))))
     (is (search "新会话已创建" output))))
+
+(test session-list-output
+  (let* ((directory (uiop:ensure-directory-pathname
+                     (uiop:merge-pathnames* "cli-output-session-list-test/"
+                                            (uiop:temporary-directory))))
+         (path (uiop:native-namestring (merge-pathnames "listed.session" directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory)
+           (is (cl-cc.session:save-session
+                (make-instance 'cl-cc.models:session-state
+                               :session-id "cli-listed"
+                               :created-at "2026-04-05T04:00:00Z"
+                               :updated-at "2026-04-05T04:05:00Z"
+                               :history-index 5
+                               :context-summary '(:input "cli input" :result "cli result")
+                               :tasks nil
+                               :permission-snapshot path
+                               :status :active
+                               :version "0.1")
+                path))
+           (let ((output (capture-output (lambda () (cl-cc:handle-session-list (uiop:native-namestring directory) "text")))))
+             (is (search "会话数量: 1" output))
+             (is (search "cli-listed" output))
+             (is (search "listed.session" output))))
+      (when (probe-file directory)
+        (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore)))))
+
+(test session-list-json-output
+  (let* ((directory (uiop:ensure-directory-pathname
+                     (uiop:merge-pathnames* "cli-output-session-list-json-test/"
+                                            (uiop:temporary-directory))))
+         (path (uiop:native-namestring (merge-pathnames "listed-json.session" directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory)
+           (is (cl-cc.session:save-session
+                (make-instance 'cl-cc.models:session-state
+                               :session-id "cli-listed-json"
+                               :created-at "2026-04-05T04:10:00Z"
+                               :updated-at "2026-04-05T04:15:00Z"
+                               :history-index nil
+                               :context-summary '(:input "json input" :result "json result")
+                               :tasks '((:task-id "shell-task-11"))
+                               :permission-snapshot path
+                               :status :active
+                               :version "0.1")
+                path))
+           (let ((output (capture-output (lambda () (cl-cc:handle-session-list (uiop:native-namestring directory) "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"sessionDirectory\":" output))
+             (is (search "\"usedDefaultDirectory\":false" output))
+             (is (search "\"sessionCount\":1" output))
+             (is (search "\"sessionId\":\"cli-listed-json\"" output))
+             (is (search "\"taskCount\":1" output))
+             (is (search "\"lastInput\":\"json input\"" output))
+             (is (search "\"lastResult\":\"json result\"" output))))
+      (when (probe-file directory)
+        (uiop:delete-directory-tree directory :validate t :if-does-not-exist :ignore)))))
 
 (test session-start-json-output
   (let ((output (capture-output (lambda () (cl-cc:handle-session-start "json-session" 2 "json")))))
@@ -261,40 +412,43 @@
            (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
                                                                               "shell task list"
                                                                               "json")))))
-             (is (search "\"status\":\"success\"" output))
-             (is (search "\"executionStatus\":\"success\"" output))
-             (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
-             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-list-tool\"" output))
-             (is (search "\"statusFilter\":\"all\"" output))
-             (is (search "\"taskIdPrefixFilter\":null" output))
-             (is (search "\"directoryContainsFilter\":null" output))
-             (is (search "\"terminationReasonFilter\":null" output))
-             (is (search "\"totalCount\":" output))
-             (is (search "\"runningCount\":" output))
-             (is (search "\"completedCount\":" output))
-             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) output))
-             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) output))
-             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) output))
-             (is (search "\"stallDetected\":false" output))
-             (is (search "\"stallDetectedAt\":null" output))
-             (is (search "\"stallPromptLine\":null" output))
-             (is (search "\"terminationReason\":\"exit\"" output))
-             (is (search "\"terminationReason\":\"interrupt\"" output))
-             (is (search "\"endedAt\":" output))
-             (let ((filtered-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
-                                                                                           (format nil "shell task list :: status=running :: task=~A" running-task-id)
-                                                                                           "json")))))
-               (is (search "\"statusFilter\":\"running\"" filtered-output))
-               (is (search (format nil "\"taskIdPrefixFilter\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-output))
-               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-output))
-               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) filtered-output)))
-               (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" filtered-output)))
-             (let ((termination-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
-                                                                                              "shell task list :: termination=interrupt"
-                                                                                              "json")))))
-               (is (search "\"terminationReasonFilter\":\"interrupt\"" termination-output))
-               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) termination-output))
-               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) termination-output))))))
+             (let ((tool-output (%session-tool-result-json-section output "shell-task-list-tool")))
+               (is (search "\"status\":\"success\"" output))
+               (is (search "\"executionStatus\":\"success\"" output))
+               (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+               (is (search "\"toolResults\":[{\"toolId\":\"shell-task-list-tool\"" output))
+               (is (search "\"statusFilter\":\"all\"" tool-output))
+               (is (search "\"taskIdPrefixFilter\":null" tool-output))
+               (is (search "\"directoryContainsFilter\":null" tool-output))
+               (is (search "\"terminationReasonFilter\":null" tool-output))
+               (is (search "\"totalCount\":" tool-output))
+               (is (search "\"runningCount\":" tool-output))
+               (is (search "\"completedCount\":" tool-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) tool-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) tool-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) tool-output))
+               (is (search "\"stallDetected\":false" tool-output))
+               (is (search "\"stallDetectedAt\":null" tool-output))
+               (is (search "\"stallPromptLine\":null" tool-output))
+               (is (search "\"terminationReason\":\"exit\"" tool-output))
+               (is (search "\"terminationReason\":\"interrupt\"" tool-output))
+               (is (search "\"endedAt\":" tool-output))))
+           (let ((filtered-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                         (format nil "shell task list :: status=running :: task=~A" running-task-id)
+                                                                                         "json")))))
+             (let ((filtered-tool-output (%session-tool-result-json-section filtered-output "shell-task-list-tool")))
+               (is (search "\"statusFilter\":\"running\"" filtered-tool-output))
+               (is (search (format nil "\"taskIdPrefixFilter\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-tool-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string running-task-id)) filtered-tool-output))
+               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) filtered-tool-output))))
+             (is (search "\"selectedTools\":[\"shell-task-list-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" filtered-output)))
+           (let ((termination-output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                                            "shell task list :: termination=interrupt"
+                                                                                            "json")))))
+             (let ((termination-tool-output (%session-tool-result-json-section termination-output "shell-task-list-tool")))
+               (is (search "\"terminationReasonFilter\":\"interrupt\"" termination-tool-output))
+               (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string interrupted-task-id)) termination-tool-output))
+               (is (not (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string completed-task-id)) termination-tool-output))))))
       (when running-task-id
         (remhash running-task-id cl-cc.tools::*shell-background-task-registry*))
       (when completed-task-id
@@ -391,21 +545,22 @@
          (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
                                                                             (format nil "shell task ~A" task-id)
                                                                             "json")))))
-           (is (search "\"status\":\"success\"" output))
-           (is (search "\"executionStatus\":\"success\"" output))
-           (is (search "\"selectedTools\":[\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
-           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-tool\"" output))
-           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
-           (is (search "\"status\":\"running\"" output))
-           (is (search "\"running\":true" output))
-           (is (search "\"stopped\":false" output))
-           (is (search "\"stallDetected\":false" output))
-           (is (search "\"stallDetectedAt\":null" output))
-           (is (search "\"stallPromptLine\":null" output))
-           (is (search "\"terminationReason\":null" output))
-           (is (search "\"endedAt\":null" output))
-           (is (search "\"timedOut\":false" output))
-           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output)))
+           (let ((tool-output (%session-tool-result-json-section output "shell-task-tool")))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"executionStatus\":\"success\"" output))
+             (is (search "\"selectedTools\":[\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-tool\"" output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) tool-output))
+             (is (search "\"status\":\"running\"" tool-output))
+             (is (search "\"running\":true" tool-output))
+             (is (search "\"stopped\":false" tool-output))
+             (is (search "\"stallDetected\":false" tool-output))
+             (is (search "\"stallDetectedAt\":null" tool-output))
+             (is (search "\"stallPromptLine\":null" tool-output))
+             (is (search "\"terminationReason\":null" tool-output))
+             (is (search "\"endedAt\":null" tool-output))
+             (is (search "\"timedOut\":false" tool-output))
+             (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) tool-output))))
       (when task-id
         (remhash task-id cl-cc.tools::*shell-background-task-registry*))
       (sleep 0.2)
@@ -490,25 +645,26 @@
          (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
                                                                             (format nil "shell task detail ~A" task-id)
                                                                             "json")))))
-           (is (search "\"status\":\"success\"" output))
-           (is (search "\"executionStatus\":\"success\"" output))
-           (is (search "\"selectedTools\":[\"shell-task-detail-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
-           (is (search "\"toolResults\":[{\"toolId\":\"shell-task-detail-tool\"" output))
-           (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) output))
-           (is (search "\"status\":\"running\"" output))
-           (is (search "\"running\":true" output))
-           (is (search "\"stopped\":false" output))
-           (is (search "\"startedAt\":" output))
-           (is (search "\"stallDetected\":false" output))
-           (is (search "\"stallDetectedAt\":null" output))
-           (is (search "\"stallPromptLine\":null" output))
-           (is (search "\"terminationReason\":null" output))
-           (is (search "\"endedAt\":null" output))
-           (is (search "\"durationSeconds\":" output))
-           (is (search "\"outputBytes\":" output))
-           (is (search "\"outputLineCount\":2" output))
-           (is (search "\"outputUpdatedAt\":" output))
-           (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) output)))
+           (let ((tool-output (%session-tool-result-json-section output "shell-task-detail-tool")))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"executionStatus\":\"success\"" output))
+             (is (search "\"selectedTools\":[\"shell-task-detail-tool\",\"shell-task-tool\",\"file-read-tool\",\"echo-tool\",\"failing-tool\"]" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"shell-task-detail-tool\"" output))
+             (is (search (format nil "\"taskId\":~A" (cl-cc::%cli-json-string task-id)) tool-output))
+             (is (search "\"status\":\"running\"" tool-output))
+             (is (search "\"running\":true" tool-output))
+             (is (search "\"stopped\":false" tool-output))
+             (is (search "\"startedAt\":" tool-output))
+             (is (search "\"stallDetected\":false" tool-output))
+             (is (search "\"stallDetectedAt\":null" tool-output))
+             (is (search "\"stallPromptLine\":null" tool-output))
+             (is (search "\"terminationReason\":null" tool-output))
+             (is (search "\"endedAt\":null" tool-output))
+             (is (search "\"durationSeconds\":" tool-output))
+             (is (search "\"outputBytes\":" tool-output))
+             (is (search "\"outputLineCount\":2" tool-output))
+             (is (search "\"outputUpdatedAt\":" tool-output))
+             (is (search (format nil "\"outputPath\":~A" (cl-cc::%cli-json-string output-path)) tool-output))))
       (when task-id
         (remhash task-id cl-cc.tools::*shell-background-task-registry*))
       (sleep 0.2)
@@ -814,6 +970,24 @@
                         :payload '(:session-id "saved-json-session"
                                   :history-index 2
                                   :session-status :active
+                                  :tasks ((:task-id "shell-task-123"
+                                           :type "shell"
+                                           :status "running"
+                                           :running t
+                                           :stopped nil
+                                           :command "Start-Sleep -Seconds 5"
+                                           :directory "D:/VSCode/cl-cc/cl-cc/"
+                                           :output-path "C:/Temp/shell-task-123.log"
+                                           :process-id 1234
+                                           :exit-code nil
+                                           :started-at "2026-04-05T00:00:00Z"
+                                           :stopped-at nil
+                                           :finished-at nil
+                                           :stall-detected nil
+                                           :stall-detected-at nil
+                                           :stall-prompt-line nil
+                                           :termination-reason nil
+                                           :ended-at nil))
                                   :input "hello json"
               :execution-status :success
               :selected-tools ("echo-tool")
@@ -831,7 +1005,7 @@
                                   :exit-code 0)
                         :message "ignored")))
                     (is (string= (cl-cc::render-session-command-result result-object :output-format "json")
-           "{\"status\":\"success\",\"sessionId\":\"saved-json-session\",\"historyIndex\":2,\"sessionStatus\":\"active\",\"input\":\"hello json\",\"executionStatus\":\"success\",\"selectedTools\":[\"echo-tool\"],\"executionPlan\":[{\"tool\":\"echo-tool\",\"input\":\"hello json\"}],\"result\":\"tool:echo-tool result:hello json\",\"toolResults\":[{\"toolId\":\"echo-tool\",\"status\":\"success\",\"durationSeconds\":0.5,\"output\":{\"result\":\"hello json\"},\"error\":null,\"errorCode\":null}],\"sessionPath\":\"saved.session\",\"saved\":true,\"durationSeconds\":0.25,\"exitCode\":0}"))))
+                   "{\"status\":\"success\",\"sessionId\":\"saved-json-session\",\"historyIndex\":2,\"sessionStatus\":\"active\",\"tasks\":[{\"taskId\":\"shell-task-123\",\"type\":\"shell\",\"status\":\"running\",\"running\":true,\"stopped\":false,\"command\":\"Start-Sleep -Seconds 5\",\"directory\":\"D:/VSCode/cl-cc/cl-cc/\",\"outputPath\":\"C:/Temp/shell-task-123.log\",\"processId\":1234,\"exitCode\":null,\"startedAt\":\"2026-04-05T00:00:00Z\",\"stoppedAt\":null,\"finishedAt\":null,\"stallDetected\":false,\"stallDetectedAt\":null,\"stallPromptLine\":null,\"terminationReason\":null,\"endedAt\":null}],\"input\":\"hello json\",\"executionStatus\":\"success\",\"selectedTools\":[\"echo-tool\"],\"executionPlan\":[{\"tool\":\"echo-tool\",\"input\":\"hello json\"}],\"result\":\"tool:echo-tool result:hello json\",\"toolResults\":[{\"toolId\":\"echo-tool\",\"status\":\"success\",\"durationSeconds\":0.5,\"output\":{\"result\":\"hello json\"},\"error\":null,\"errorCode\":null}],\"sessionPath\":\"saved.session\",\"saved\":true,\"durationSeconds\":0.25,\"exitCode\":0}"))))
 
 (test run-fixture-json-rendering-remains-stable
   (let ((result-object (cl-cc.lib:make-result
@@ -914,6 +1088,18 @@
       (invoke-main-capturing-stderr "run" "--fixture")
     (is (= exit-code 1))
     (is (search "[DEBUG] [ERROR] INVALID-ARGUMENTS:" stderr))))
+
+(test main-logs-invalid-help-auth-scope-to-stderr
+  (multiple-value-bind (exit-code stderr)
+      (invoke-main-capturing-stderr "--help" "--auth-scope" "private")
+    (is (= exit-code 1))
+    (is (search "[DEBUG] [ERROR] INVALID-ARGUMENTS: Invalid arguments for command help" stderr))))
+
+(test main-logs-invalid-help-group-scope-to-stderr
+  (multiple-value-bind (exit-code stderr)
+      (invoke-main-capturing-stderr "--help" "--group-scope" "preview")
+    (is (= exit-code 1))
+    (is (search "[DEBUG] [ERROR] INVALID-ARGUMENTS: Invalid arguments for command help" stderr))))
 
 (test main-logs-unhandled-errors-to-stderr
   (let ((original-dispatch (symbol-function 'cl-cc.core:dispatch-command)))

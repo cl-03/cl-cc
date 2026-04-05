@@ -38,6 +38,25 @@
     :flag t
     :summary "仅检查命令参考是否需要同步，不写回文件"))
 
+(defun %docs-sync-reference-auth-scope-option ()
+  '(:flags ("--auth-scope")
+    :key :auth-scope
+    :type (:enum "all" "public" "requires-auth")
+    :default "all"
+    :value-name "<auth-scope>"
+    :summary "生成或检查指定 auth 视图的命令参考: all、public 或 requires-auth"))
+
+(defun %command-group-scope-values ()
+  '("all" "meta" "chat" "session" "automation" "docs"))
+
+(defun %docs-sync-reference-group-scope-option ()
+  `(:flags ("--group-scope")
+    :key :group-scope
+    :type (:enum ,@(%command-group-scope-values))
+    :default "all"
+    :value-name "<group-scope>"
+    :summary "生成或检查指定命令分组视图: all、meta、chat、session、automation 或 docs"))
+
 (defun %session-persistence-output-fields ()
   (list (schema-field "sessionPath" "若请求持久化，则为写入的快照路径" :type :string :required nil :nullable t)
         (schema-field "saved" "是否已将新会话快照写入 sessionPath" :type :boolean :required nil :nullable t)))
@@ -80,6 +99,64 @@
                 :fields (list (schema-field "tool" "计划步骤对应的工具标识" :type :string)
                               (schema-field "input" "计划步骤归一化后的工具输入" :required nil :nullable t))))
 
+(defun %session-list-entry-output-fields ()
+  (list (schema-field "sessionId" "会话 ID" :type :string)
+        (schema-field "sessionPath" "会话快照路径" :type :string)
+        (schema-field "createdAt" "会话创建时间快照字段" :type :string :required nil :nullable t)
+        (schema-field "updatedAt" "会话最近更新时间快照字段" :type :string :required nil :nullable t)
+        (%nullable-nonnegative-integer-schema-field "historyIndex" "会话当前历史索引；缺失时为 null")
+        (schema-field "sessionStatus" "会话状态" :type :string)
+        (schema-field "taskCount" "该会话已知后台任务快照数量" :type :integer :minimum 0)
+        (schema-field "lastInput" "最近一次 session run 输入；缺失时为 null" :type :string :required nil :nullable t)
+        (schema-field "lastResult" "最近一次稳定执行结果；缺失时为 null" :type :string :required nil :nullable t)
+        (schema-field "fileSizeBytes" "快照文件大小（字节）；不可用时为 null" :type :integer :minimum 0 :required nil :nullable t)
+        (schema-field "fileUpdatedAt" "快照文件最后修改时间，UTC ISO-8601 格式；不可用时为 null" :type :string :required nil :nullable t)
+        (schema-field "version" "快照格式版本" :type :string :required nil :nullable t)))
+
+(defun %session-list-command-output-schema ()
+  (%closed-json-output-schema
+   "session list message"
+   (append (list (%success-status-schema-field "结果状态，当前固定为 success")
+                 (schema-field "sessionDirectory" "本次扫描的会话目录" :type :string)
+                 (schema-field "usedDefaultDirectory" "是否使用了默认会话目录" :type :boolean)
+                 (schema-field "sessionCount" "扫描到的有效会话数量" :type :integer :minimum 0)
+                 (schema-field "sessions"
+                               "会话快照元数据列表"
+                               :type :array
+                               :collection t
+                               :closed t
+                               :fields (%session-list-entry-output-fields)))
+           (%duration-and-exit-code-output-fields "本次 session list 执行时长（秒）"))))
+
+(defun %session-task-output-fields ()
+  (list (schema-field "taskId" "后台任务标识" :type :string)
+        (schema-field "type" "后台任务类型；当前固定为 shell" :type :string)
+        (schema-field "status" "后台任务当前状态" :type :string)
+        (schema-field "running" "后台任务当前是否仍在运行" :type :boolean)
+        (schema-field "stopped" "后台任务是否已被显式停止" :type :boolean)
+        (schema-field "command" "后台任务对应的 shell 命令" :type :string)
+        (schema-field "directory" "后台任务执行目录" :type :string)
+        (schema-field "outputPath" "后台任务输出日志路径" :type :string)
+        (%nullable-nonnegative-integer-schema-field "processId" "后台任务底层进程 ID；不可用时为 null")
+        (%nullable-nonnegative-integer-schema-field "exitCode" "后台任务退出码；运行中或不可用时为 null")
+        (schema-field "startedAt" "后台任务开始时间，UTC ISO-8601 格式" :type :string :required nil :nullable t)
+        (schema-field "stoppedAt" "后台任务显式停止时间；未停止时为 null" :type :string :required nil :nullable t)
+        (schema-field "finishedAt" "后台任务自然结束时间；运行中或显式停止时为 null" :type :string :required nil :nullable t)
+        (schema-field "stallDetected" "后台任务是否检测到疑似交互 stall；未检测到时为 false" :type :boolean)
+        (schema-field "stallDetectedAt" "后台任务首次检测到疑似 stall 的时间；未检测到时为 null" :type :string :required nil :nullable t)
+        (schema-field "stallPromptLine" "后台任务触发 stall 检测时的最后一行输出；未检测到时为 null" :type :string :required nil :nullable t)
+        (schema-field "terminationReason" "后台任务终止原因；运行中时为 null" :type :string :required nil :nullable t)
+        (schema-field "endedAt" "后台任务终止时间；运行中时为 null" :type :string :required nil :nullable t)))
+
+(defun %session-tasks-output-field ()
+  (schema-field "tasks"
+                "当前会话已知的后台任务快照列表；无任务时该字段可省略"
+                :type :array
+                :required nil
+                :collection t
+                :closed t
+                :fields (%session-task-output-fields)))
+
 (defun %session-git-context-output-fields ()
   (list (schema-field "gitRoot" "本次 session run 检测到的 Git 根目录；未处于 Git 仓库时为 null" :type :string :required nil :nullable t)
         (schema-field "gitBranch" "本次 session run 检测到的 Git 当前分支；无法识别时为 null" :type :string :required nil :nullable t)
@@ -92,7 +169,8 @@
   (append (list (%success-status-schema-field "结果状态，当前固定为 success")
                 (schema-field "sessionId" session-id-summary :type :string)
                 (%nullable-nonnegative-integer-schema-field "historyIndex" history-index-summary)
-                (%session-status-schema-field session-status-summary))
+          (%session-status-schema-field session-status-summary)
+          (%session-tasks-output-field))
           extra-fields
           (%duration-and-exit-code-output-fields duration-summary)))
 
@@ -166,6 +244,28 @@
                         :session-path
                         "<session-path>"
                         "执行后将更新后的快照写入指定路径"))
+
+(defun %session-dir-option ()
+  (%string-value-option '("--session-dir")
+                        :session-dir
+                        "<session-dir>"
+                        "指定 session list 扫描的目录；未提供时使用默认会话目录"))
+
+(defun %help-auth-scope-option ()
+  '(:flags ("--auth-scope")
+    :key :auth-scope
+    :type (:enum "all" "public" "requires-auth")
+    :default "all"
+    :value-name "<auth-scope>"
+    :summary "过滤帮助视图: all、public 或 requires-auth"))
+
+(defun %help-group-scope-option ()
+  `(:flags ("--group-scope")
+    :key :group-scope
+    :type (:enum ,@(%command-group-scope-values))
+    :default "all"
+    :value-name "<group-scope>"
+    :summary "过滤帮助分组视图: all、meta、chat、session、automation 或 docs"))
 
 (defun %history-index-option ()
   (%integer-value-option '("--history-index")
