@@ -400,6 +400,15 @@
   (and task-id
        (gethash task-id *shell-background-task-registry*)))
 
+(defun %sorted-shell-background-task-entries ()
+  (let ((entries '()))
+    (maphash (lambda (_ entry)
+               (declare (ignore _))
+               (push entry entries))
+             *shell-background-task-registry*)
+    (sort entries #'string< :key (lambda (entry)
+                                   (or (getf entry :task-id) "")))))
+
 #+sbcl
 (defun %shell-background-process-alive-p (process)
   (and process
@@ -445,6 +454,34 @@
             (not (zerop exit-code)))
        "failed")
       (t "completed"))))
+
+(defun %shell-background-task-snapshot (entry)
+  (let* ((status (%shell-background-task-status entry))
+         (process (getf entry :process))
+         (exit-code (%shell-background-process-exit-code process)))
+    (list :task-id (getf entry :task-id)
+          :type "shell"
+          :status status
+          :running (string= status "running")
+          :stopped (string= status "stopped")
+          :command (getf entry :command)
+          :directory (getf entry :directory)
+          :output-path (getf entry :output-path)
+          :process-id (getf entry :process-id)
+          :exit-code exit-code
+          :started-at (%format-shell-background-task-time (getf entry :started-at))
+          :stopped-at (%format-shell-background-task-time (getf entry :stopped-at))
+          :finished-at (%format-shell-background-task-time (getf entry :finished-at))
+          :stall-detected (%shell-background-task-stall-detected-p entry)
+          :stall-detected-at (%shell-background-task-stall-detected-at-string entry)
+          :stall-prompt-line (%shell-background-task-stall-prompt-line entry)
+          :termination-reason (getf entry :termination-reason)
+          :ended-at (%format-shell-background-task-time (%shell-background-task-ended-at entry)))))
+
+(defun current-shell-task-snapshots ()
+  "返回当前后台 shell 任务的可序列化快照数组。"
+  (mapcar #'%shell-background-task-snapshot
+          (%sorted-shell-background-task-entries)))
 
 (defun %register-shell-background-task (task-id process command directory output-path)
   (let ((started-at (get-universal-time))

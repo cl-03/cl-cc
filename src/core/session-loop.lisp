@@ -42,13 +42,15 @@
                           :results nil))
 
 (defun %session-loop-summary (session next-history-index resolved-input context result tool-ids execution-plan previous-history git-context)
-  (let* ((summary (list :session-id (cl-cc.models:session-id session)
+  (let* ((task-snapshots (cl-cc.tools:current-shell-task-snapshots))
+         (summary (list :session-id (cl-cc.models:session-id session)
                         :status :completed
                         :history-index next-history-index
                         :input resolved-input
                         :selected-tools tool-ids
                         :execution-plan execution-plan
                         :git-context git-context
+                        :tasks task-snapshots
                         :result result
                         :tool-results (execution-context-results context)
                         :execution-command (execution-context-command context)
@@ -80,6 +82,7 @@
         (setf (execution-context-output context) summary)
         (setf (cl-cc.models:session-history-index session) next-history-index)
         (setf (cl-cc.models:session-context-summary session) summary)
+        (setf (cl-cc.models:session-tasks session) (getf summary :tasks))
         (setf (cl-cc.models:session-updated-at session) "loop-updated")
         (cl-cc.lib:debug-log "[SESSION] 启动会话循环: ~A" (cl-cc.models:session-id session))
         summary)
