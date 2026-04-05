@@ -128,7 +128,7 @@
   (if (and (stringp input)
            (string= input "restricted"))
       'delete-file
-      (if (member tool-id '("file-read-tool" "directory-list-tool" "grep-tool") :test #'string=)
+      (if (member tool-id '("file-read-tool" "directory-list-tool" "grep-tool" "glob-tool") :test #'string=)
           "file-read"
           (if (member tool-id '("file-write-tool" "file-edit-tool") :test #'string=)
               "file-write"
@@ -151,6 +151,7 @@
 (defun %execution-context-tool-runner-context (context action input)
   (list :action action
         :fixture input
+  :session (execution-context-session context)
         :approval-mode (execution-context-approval-mode context)
         :approval-callback (execution-context-approval-callback context)))
 

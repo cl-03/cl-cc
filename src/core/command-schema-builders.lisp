@@ -157,6 +157,20 @@
                 :closed t
                 :fields (%session-task-output-fields)))
 
+(defun %session-todo-item-output-fields ()
+  (list (schema-field "content" "待办项内容" :type :string)
+        (schema-field "status" "待办项状态" :type :string :enum '("pending" "in_progress" "completed"))
+        (schema-field "activeForm" "待办项执行中的描述" :type :string)))
+
+(defun %session-todo-list-output-field ()
+  (schema-field "todoList"
+                "当前会话的结构化待办列表；无待办时该字段可省略"
+                :type :array
+                :required nil
+                :collection t
+                :closed t
+                :fields (%session-todo-item-output-fields)))
+
 (defun %session-git-context-output-fields ()
   (list (schema-field "gitRoot" "本次 session run 检测到的 Git 根目录；未处于 Git 仓库时为 null" :type :string :required nil :nullable t)
         (schema-field "gitBranch" "本次 session run 检测到的 Git 当前分支；无法识别时为 null" :type :string :required nil :nullable t)
@@ -170,7 +184,8 @@
                 (schema-field "sessionId" session-id-summary :type :string)
                 (%nullable-nonnegative-integer-schema-field "historyIndex" history-index-summary)
           (%session-status-schema-field session-status-summary)
-          (%session-tasks-output-field))
+        (%session-tasks-output-field)
+        (%session-todo-list-output-field))
           extra-fields
           (%duration-and-exit-code-output-fields duration-summary)))
 
@@ -199,7 +214,7 @@
 
 (defun %run-error-code-values ()
   '("FAIL" "PERMISSION-DENIED" "TOOL-NOT-FOUND" "FILE-READ-FAILED" "DIRECTORY-LIST-FAILED"
-    "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED" "SHELL-EXECUTION-FAILED"))
+    "FILE-WRITE-FAILED" "FILE-EDIT-FAILED" "GREP-SEARCH-FAILED" "TODO-WRITE-FAILED" "SHELL-EXECUTION-FAILED"))
 
 (defun %output-format-option (&key default-when)
   (append '(:flags ("-o" "--output-format")
@@ -354,6 +369,8 @@
                                           (:tool-id "directory-list-tool" :kind :error-output)
                                           (:tool-id "grep-tool" :kind :output)
                                           (:tool-id "grep-tool" :kind :error-output)
+                                          (:tool-id "todo-write-tool" :kind :output)
+                                          (:tool-id "todo-write-tool" :kind :error-output)
                                           (:tool-id "file-write-tool" :kind :output)
                                           (:tool-id "file-write-tool" :kind :error-output)
                                           (:tool-id "file-edit-tool" :kind :output)

@@ -322,6 +322,38 @@
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
 
+(test session-run-json-output-can-render-recursive-directory-list-tool-result
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "session-run-json-directory-list-recursive/"
+                                                 (uiop:temporary-directory))))
+         (child-directory (merge-pathnames "child/" directory-path))
+         (root-file (merge-pathnames "a.txt" directory-path))
+         (child-file (merge-pathnames "note.txt" child-directory)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist child-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "a" stream))
+           (with-open-file (stream child-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "note" stream))
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                               (format nil "list directory ~A :: recursive"
+                                                                                       (uiop:native-namestring directory-path))
+                                                                               "json")))))
+             (is (search "\"status\":\"success\"" output))
+             (is (search "\"executionStatus\":\"success\"" output))
+             (is (search "\"result\":\"tool:directory-list-tool result:a.txt\\nchild/\\nchild/note.txt\"" output))
+             (is (search "\"toolResults\":[{\"toolId\":\"directory-list-tool\"" output))
+             (is (search "\"output\":{\"result\":\"a.txt\\nchild/\\nchild/note.txt\"}" output))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file child-file)
+        (delete-file child-file))
+      (when (probe-file child-directory)
+        (uiop:delete-directory-tree child-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
 (test session-run-json-output-can-render-grep-tool-result
   (let* ((directory-path (uiop:ensure-directory-pathname
                           (uiop:merge-pathnames* "session-run-json-grep/"

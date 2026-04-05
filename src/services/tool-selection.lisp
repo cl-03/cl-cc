@@ -20,7 +20,7 @@
   "触发 file-write-tool 优先级的输入关键词。")
 
 (defparameter +file-edit-tool-keywords+
-  '("edit file" "replace in file" "replace text in file" "modify file"
+  '("edit file" "replace in file" "replace text in file" "modify file" "patch file"
     "replace all in file" "replace all text in file" "replace all matches in file"
     "编辑文件" "替换文件" "替换文件内容" "修改文件" "全部替换文件" "替换文件全部命中" "替换文件所有命中")
   "触发 file-edit-tool 优先级的输入关键词。")
@@ -34,6 +34,16 @@
   '("grep " "search code" "search text" "search for" "find text" "find in files"
     "搜索代码" "搜索文本" "查找文本" "在代码中搜索")
   "触发 grep-tool 优先级的输入关键词。")
+
+(defparameter +glob-tool-keywords+
+  '("glob " "find files" "search files" "match files"
+    "查找文件" "搜索文件" "列出匹配文件")
+  "触发 glob-tool 优先级的输入关键词。")
+
+(defparameter +todo-write-tool-keywords+
+  '("todo write" "update todo list" "todo list " "track progress"
+    "待办列表" "更新待办列表" "任务清单")
+  "触发 todo-write-tool 优先级的输入关键词。")
 
 (defparameter +shell-tool-keywords+
   '("run shell " "shell " "bash " "execute command " "run command "
@@ -123,6 +133,14 @@
 
 (defun %planned-tool-input (tool-id context)
   (cond
+    ((string= tool-id "todo-write-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-todo-write-input context))
+      context))
+    ((string= tool-id "glob-tool")
+     (%planned-tool-input-or-context
+      (lambda () (cl-cc.tools::%normalized-glob-input context))
+      context))
     ((string= tool-id "grep-tool")
      (%planned-tool-input-or-context
       (lambda () (cl-cc.tools::%normalized-grep-input context))
@@ -196,6 +214,10 @@
        (list "shell-task-tool" "file-read-tool" "echo-tool" "failing-tool"))
       ((%context-contains-keyword-p normalized-context +shell-tool-keywords+)
        (list "shell-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +todo-write-tool-keywords+)
+       (list "todo-write-tool" "echo-tool" "failing-tool"))
+      ((%context-contains-keyword-p normalized-context +glob-tool-keywords+)
+       (list "glob-tool" "file-read-tool" "echo-tool" "failing-tool"))
       ((%context-contains-keyword-p normalized-context +grep-tool-keywords+)
        (list "grep-tool" "file-read-tool" "echo-tool" "failing-tool"))
       ((%context-contains-keyword-p normalized-context +file-edit-tool-keywords+)

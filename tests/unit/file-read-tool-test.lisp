@@ -21,10 +21,20 @@
              '(:path "src/main.lisp" :start-line 10 :end-line 20)))
   (is (equal (cl-cc.tools::%normalized-file-read-input "src/main.lisp:7-9")
              '(:path "src/main.lisp" :start-line 7 :end-line 9)))
+  (is (equal (cl-cc.tools::%normalized-file-read-input "read file src/main.lisp :: 2-3,7,9-10")
+             '(:path "src/main.lisp" :start-line nil :end-line nil
+               :ranges ((:start-line 2 :end-line 3)
+                        (:start-line 7 :end-line 7)
+                        (:start-line 9 :end-line 10)))))
   (is (equal (cl-cc.tools::%normalized-file-read-input "src/main.lisp:11:(defun demo)")
              '(:path "src/main.lisp" :start-line 11 :end-line 11)))
   (is (equal (cl-cc.tools::%normalized-file-read-input "读取文件 src/main.lisp 第 3-4 行")
              '(:path "src/main.lisp" :start-line 3 :end-line 4)))
+  (is (equal (cl-cc.tools::%normalized-file-read-input '(:path "src/main.lisp" :ranges ((:startLine 2 :endLine 3)
+                                                                                           (:start-line 5 :end-line 5))))
+             '(:path "src/main.lisp" :start-line nil :end-line nil
+               :ranges ((:start-line 2 :end-line 3)
+                        (:start-line 5 :end-line 5)))))
   (is (equal (cl-cc.tools::%normalized-file-read-input '(:path "src/main.lisp" :start-line 2 :end-line 5))
              '(:path "src/main.lisp" :start-line 2 :end-line 5)))
   (is (null (cl-cc.tools::%normalized-file-read-input "read file src/main.lisp :: 5-2"))))
@@ -61,5 +71,23 @@
                         (format nil "2:beta~%3:gamma")))
            (is (string= (cl-cc.tools:file-read-tool (format nil "read file ~A :: 4" path))
                         "4:delta")))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test file-read-tool-renders-multiple-ranges-with-deduplicated-lines
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "file-read-tool-multi-range-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "first~%second~%third~%fourth~%fifth") stream))
+           (is (string= (cl-cc.tools:file-read-tool (format nil "read file ~A :: 2-3,5,3-4" path))
+                        (format nil "2:second~%3:third~%5:fifth~%4:fourth")))
+           (is (string= (cl-cc.tools:file-read-tool
+                         (list :path path
+                               :ranges '((:start-line 1 :end-line 2)
+                                         (:start-line 4 :end-line 5))))
+                        (format nil "1:first~%2:second~%4:fourth~%5:fifth"))))
       (when (probe-file path)
         (delete-file path)))))

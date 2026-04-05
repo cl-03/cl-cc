@@ -30,6 +30,16 @@
                "C:/tmp/demo"))
   (is (null (cl-cc.tools::%normalized-directory-list-input "   "))))
 
+(test normalized-directory-list-input-supports-recursive-and-depth-options
+  (is (equal (cl-cc.tools::%normalized-directory-list-input "list directory C:/tmp/demo :: recursive :: depth=2")
+             '(:path "C:/tmp/demo" :recursive t :depth 2)))
+  (is (equal (cl-cc.tools::%normalized-directory-list-input "列出目录 C:/tmp/demo :: 深度=3")
+             '(:path "C:/tmp/demo" :recursive t :depth 3)))
+  (is (equal (cl-cc.tools::%normalized-directory-list-input "list directory C:/tmp/demo :: recursive :: contains=note")
+             '(:path "C:/tmp/demo" :recursive t :depth nil :contains "note")))
+  (is (equal (cl-cc.tools::%normalized-directory-list-input '(:path "C:/tmp/demo" :recursive t :depth 1))
+             '(:path "C:/tmp/demo" :recursive t :depth 1))))
+
 (test directory-list-tool-renders-sorted-entry-lines
   (let* ((directory-path (uiop:ensure-directory-pathname
                           (uiop:merge-pathnames* "directory-list-tool-test/"
@@ -52,5 +62,81 @@
         (delete-file file-b))
       (when (probe-file nested-dir)
         (uiop:delete-directory-tree nested-dir :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test directory-list-tool-can-render-recursive-entry-lines-with-depth-limit
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "directory-list-tool-recursive-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "a.txt" directory-path))
+         (child-dir (merge-pathnames "child/" directory-path))
+         (child-file (merge-pathnames "note.txt" child-dir))
+         (grandchild-dir (merge-pathnames "nested/" child-dir))
+         (grandchild-file (merge-pathnames "deep.txt" grandchild-dir)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist grandchild-dir)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "root" stream))
+           (with-open-file (stream child-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "child" stream))
+           (with-open-file (stream grandchild-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "deep" stream))
+           (is (string= (cl-cc.tools:directory-list-tool (format nil "list directory ~A :: recursive"
+                                                                 (uiop:native-namestring directory-path)))
+                        (format nil "a.txt~%child/~%child/nested/~%child/nested/deep.txt~%child/note.txt")))
+           (is (string= (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring directory-path)
+                                                                :depth 1))
+                        (format nil "a.txt~%child/"))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file child-file)
+        (delete-file child-file))
+      (when (probe-file grandchild-file)
+        (delete-file grandchild-file))
+      (when (probe-file grandchild-dir)
+        (uiop:delete-directory-tree grandchild-dir :validate t :if-does-not-exist :ignore))
+      (when (probe-file child-dir)
+        (uiop:delete-directory-tree child-dir :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test directory-list-tool-supports-contains-filter
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "directory-list-tool-contains-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "alpha.txt" directory-path))
+         (child-dir (merge-pathnames "child/" directory-path))
+         (child-file (merge-pathnames "note.txt" child-dir))
+         (other-file (merge-pathnames "other.md" child-dir)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist child-dir)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "alpha" stream))
+           (with-open-file (stream child-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "note" stream))
+           (with-open-file (stream other-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "other" stream))
+           (is (string= (cl-cc.tools:directory-list-tool (format nil "list directory ~A :: recursive :: contains=note"
+                                                                 (uiop:native-namestring directory-path)))
+                        "child/note.txt"))
+           (is (string= (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring directory-path)
+                                                                :recursive t
+                                                                :contains "child"))
+                        (format nil "child/~%child/note.txt~%child/other.md")))
+           (is (string= (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring directory-path)
+                                                                :recursive t
+                                                                :contains "missing"))
+                        "(no matching entries)")))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file child-file)
+        (delete-file child-file))
+      (when (probe-file other-file)
+        (delete-file other-file))
+      (when (probe-file child-dir)
+        (uiop:delete-directory-tree child-dir :validate t :if-does-not-exist :ignore))
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))

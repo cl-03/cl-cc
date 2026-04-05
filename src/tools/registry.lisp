@@ -96,11 +96,14 @@
 
 (define-tool "file-read-tool" #'cl-cc.tools:file-read-tool
   (:summary "读取指定文件内容，用于最小可用的只读文件检索")
-  (:input-schema `(:text "path string with optional line range"
+  (:input-schema `(:text "path string with optional line range(s)"
                    :closed t
                    :json (,(schema-field "path" "待读取的文件路径" :type :string)
                           ,(schema-field "startLine" "起始行号，缺省时读取整个文件" :type :integer :minimum 1 :required nil :nullable t)
-                          ,(schema-field "endLine" "结束行号，缺省时等于 startLine" :type :integer :minimum 1 :required nil :nullable t))))
+                          ,(schema-field "endLine" "结束行号，缺省时等于 startLine" :type :integer :minimum 1 :required nil :nullable t)
+                          ,(schema-field "ranges" "多段行范围列表；提供时按给定顺序拼接输出且自动去重重复行" :type :array :required nil :nullable t :collection t :closed t
+                                         :fields (list (schema-field "startLine" "行范围起始行号" :type :integer :minimum 1)
+                                                       (schema-field "endLine" "行范围结束行号" :type :integer :minimum 1))))))
   (:output-schema `(:text "file contents"
                     :closed t
                     :json (,(schema-field "result" "文件读取结果内容" :source :raw-result :type :string))))
@@ -126,6 +129,48 @@
                                  ,(schema-field "code" "稳定错误码" :source :error-code :type :string))))
   (:failure-modes '(:failed))
   (:permission-profile :file-read))
+
+(define-tool "glob-tool" #'cl-cc.tools:glob-tool
+  (:summary "在指定目录树下按 glob 模式匹配文件，用于最小可用的文件发现")
+  (:input-schema `(:text "glob pattern or `pattern :: root`"
+                   :closed t
+                   :json (,(schema-field "pattern" "待匹配的 glob 模式" :type :string)
+                          ,(schema-field "root" "搜索根路径，缺省为当前工作目录" :type :string :required nil :nullable t))))
+  (:output-schema `(:text "matched file paths"
+                    :closed t
+                    :json (,(schema-field "result" "匹配结果文本，每行一条相对路径记录" :source :raw-result :type :string))))
+  (:error-output-schema `(:text "glob search failed output"
+                          :closed t
+                          :json (,(schema-field "error" "glob 匹配失败摘要消息" :source :error-message :type :string)
+                                 ,(schema-field "code" "稳定错误码" :source :error-code :type :string))))
+  (:failure-modes '(:failed))
+  (:permission-profile :file-read))
+
+(define-tool "todo-write-tool" #'cl-cc.tools:todo-write-tool
+  (:summary "更新当前会话的结构化待办列表，用于最小可用的进度跟踪")
+  (:input-schema `(:text "todo list update request"
+                   :closed t
+                   :json (,(schema-field "todos" "更新后的待办列表" :type :array :closed t :collection t
+                                         :fields (list (schema-field "content" "待办项内容" :type :string)
+                                                       (schema-field "status" "待办项状态" :type :string :enum '("pending" "in_progress" "completed"))
+                                                       (schema-field "activeForm" "待办项执行中的描述" :type :string))))))
+  (:output-schema `(:text "todo write result"
+                    :closed t
+                    :json (,(schema-field "result" "待办列表更新摘要" :source '(:raw-result-field :summary) :type :string)
+                           ,(schema-field "oldTodos" "更新前的待办列表" :source '(:raw-result-field :old-todos) :type :array :required nil :nullable t :closed t :collection t
+                                          :fields (list (schema-field "content" "待办项内容" :type :string)
+                                                        (schema-field "status" "待办项状态" :type :string)
+                                                        (schema-field "activeForm" "待办项执行中的描述" :type :string)))
+                           ,(schema-field "newTodos" "更新后的待办列表" :source '(:raw-result-field :new-todos) :type :array :closed t :collection t
+                                          :fields (list (schema-field "content" "待办项内容" :type :string)
+                                                        (schema-field "status" "待办项状态" :type :string)
+                                                        (schema-field "activeForm" "待办项执行中的描述" :type :string))))))
+  (:error-output-schema `(:text "todo write failed output"
+                          :closed t
+                          :json (,(schema-field "error" "待办列表写入失败摘要消息" :source :error-message :type :string)
+                                 ,(schema-field "code" "稳定错误码" :source :error-code :type :string))))
+  (:failure-modes '(:failed))
+  (:permission-profile :default))
 
 (define-tool "shell-tool" #'cl-cc.tools:shell-tool
   (:summary "执行受控 shell 命令，用于最小可用的终端/命令行操作")
@@ -453,9 +498,12 @@
 
 (define-tool "directory-list-tool" #'cl-cc.tools:directory-list-tool
   (:summary "列出指定目录的子项，用于最小可用的只读目录检索")
-  (:input-schema `(:text "path string"
+  (:input-schema `(:text "path string with optional recursive/depth/contains modifiers"
                    :closed t
-                   :json (,(schema-field "input" "待列举的目录路径" :type :string))))
+                   :json (,(schema-field "path" "待列举的目录路径" :type :string)
+                          ,(schema-field "recursive" "是否递归列举子目录，缺省为 false" :type :boolean :required nil :nullable t)
+                          ,(schema-field "depth" "递归列举的最大深度，缺省为不限制" :type :integer :required nil :nullable t :minimum 1)
+                          ,(schema-field "contains" "仅返回路径中包含该子串的条目，缺省为不过滤" :type :string :required nil :nullable t))))
   (:output-schema `(:text "directory entries"
                     :closed t
                     :json (,(schema-field "result" "目录列举结果内容" :source :raw-result :type :string))))

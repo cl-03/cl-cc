@@ -191,6 +191,35 @@
       (when (and output-path (probe-file output-path))
         (ignore-errors (delete-file output-path))))))
 
+(test run-session-result-can-update-and-persist-todo-list-via-todo-write-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "todo-session-test.session"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (let* ((input "todo write Implement todo tool | in_progress | Implementing todo tool ;; Run tests | pending | Running tests")
+                (result-object (cl-cc.services:run-session-result "todo-session" :input input :session-path path))
+                (payload (cl-cc.lib:result-payload result-object))
+                (tool-record (first (getf payload :tool-results)))
+                (restored (cl-cc.session:load-session path)))
+           (is (eq (cl-cc.lib:result-status result-object) :success))
+           (is (string= (getf payload :result)
+                        "tool:todo-write-tool result:更新待办列表: 2 项（进行中 1，待处理 1，已完成 0）"))
+           (is (equal (getf payload :selected-tools)
+                      '("todo-write-tool" "echo-tool" "failing-tool")))
+           (is (equal (getf payload :todo-list)
+                      '((:content "Implement todo tool" :status "in_progress" :active-form "Implementing todo tool")
+                        (:content "Run tests" :status "pending" :active-form "Running tests"))))
+           (is (string= (getf tool-record :tool) "todo-write-tool"))
+           (is (eq (getf tool-record :status) :success))
+           (is (equal (getf (getf tool-record :output) :new-todos)
+                      '((:content "Implement todo tool" :status "in_progress" :active-form "Implementing todo tool")
+                        (:content "Run tests" :status "pending" :active-form "Running tests"))))
+           (is (equal (cl-cc.models:session-todo-list restored)
+                      '((:content "Implement todo tool" :status "in_progress" :active-form "Implementing todo tool")
+                        (:content "Run tests" :status "pending" :active-form "Running tests")))))
+      (when (probe-file path)
+        (delete-file path)))))
+
 (test list-sessions-result-preserves-session-directory-and-metadata
   (let* ((directory (uiop:ensure-directory-pathname
                      (uiop:merge-pathnames* "session-service-list-test/"
@@ -278,6 +307,34 @@
       (when (probe-file path)
         (delete-file path)))))
 
+(test run-session-result-can-read-file-multi-ranges-via-file-read-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-read-file-multi-range-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "first~%second~%third~%fourth~%fifth") stream))
+           (let* ((input (format nil "read file ~A :: 2-3,5" path))
+                  (result-object (cl-cc.services:run-session-result "file-multi-range-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (string= (getf payload :input) input))
+             (is (equal (first (getf payload :execution-plan))
+                        (list :tool "file-read-tool"
+                              :input (list :path path :start-line nil :end-line nil
+                                           :ranges (list (list :start-line 2 :end-line 3)
+                                                         (list :start-line 5 :end-line 5))))))
+             (is (string= (getf payload :result)
+                          (format nil "tool:file-read-tool result:2:second~%3:third~%5:fifth")))
+             (is (string= (getf tool-record :tool) "file-read-tool"))
+             (is (eq (getf tool-record :status) :success))
+             (is (equal (getf tool-record :output)
+                        (list :result (format nil "2:second~%3:third~%5:fifth"))))))
+      (when (probe-file path)
+        (delete-file path)))))
+
 (test run-session-result-can-list-directory-content-via-directory-list-tool
   (let* ((directory-path (uiop:ensure-directory-pathname
                           (uiop:merge-pathnames* "run-session-list-directory-test/"
@@ -305,6 +362,78 @@
         (delete-file file-a))
       (when (probe-file file-b)
         (delete-file file-b))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test run-session-result-can-list-directory-recursively-via-directory-list-tool
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "run-session-list-directory-recursive-test/"
+                                                 (uiop:temporary-directory))))
+         (child-directory (merge-pathnames "child/" directory-path))
+         (root-file (merge-pathnames "a.txt" directory-path))
+         (child-file (merge-pathnames "note.txt" child-directory)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist child-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "a" stream))
+           (with-open-file (stream child-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "note" stream))
+           (let* ((result-object (cl-cc.services:run-session-result "dir-recursive-session"
+                                                                    :input (format nil "list directory ~A :: recursive"
+                                                                                   (uiop:native-namestring directory-path))))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (eq (getf payload :execution-status) :success))
+             (is (string= (getf payload :result)
+                          (format nil "tool:directory-list-tool result:a.txt~%child/~%child/note.txt")))
+             (is (string= (getf tool-record :tool) "directory-list-tool"))
+             (is (eq (getf tool-record :status) :success))
+             (is (string= (getf (getf tool-record :output) :result)
+                          (format nil "a.txt~%child/~%child/note.txt")))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file child-file)
+        (delete-file child-file))
+      (when (probe-file child-directory)
+        (uiop:delete-directory-tree child-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test run-session-result-can-list-directory-with-contains-filter-via-directory-list-tool
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "run-session-list-directory-contains-test/"
+                                                 (uiop:temporary-directory))))
+         (child-directory (merge-pathnames "child/" directory-path))
+         (root-file (merge-pathnames "a.txt" directory-path))
+         (child-file (merge-pathnames "note.txt" child-directory)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist child-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "a" stream))
+           (with-open-file (stream child-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "note" stream))
+           (let* ((result-object (cl-cc.services:run-session-result "dir-contains-session"
+                                                                    :input (format nil "list directory ~A :: recursive :: contains=note"
+                                                                                   (uiop:native-namestring directory-path))))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (eq (getf payload :execution-status) :success))
+             (is (string= (getf payload :result)
+                          "tool:directory-list-tool result:child/note.txt"))
+             (is (string= (getf tool-record :tool) "directory-list-tool"))
+             (is (eq (getf tool-record :status) :success))
+             (is (string= (getf (getf tool-record :output) :result)
+                          "child/note.txt"))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file child-file)
+        (delete-file child-file))
+      (when (probe-file child-directory)
+        (uiop:delete-directory-tree child-directory :validate t :if-does-not-exist :ignore))
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
 
@@ -848,6 +977,59 @@
              (is (= (getf output :line-context) 0))
              (is (= (getf output :match-count) 1))
              (is (string= (uiop:read-file-string path) "token-42"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-combinable-regex-line-context-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-combinable-regex-line-context-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "TOKEN-42" stream))
+           (let* ((input (format nil "preview regex ignore case context 0 patch file ~A::token-[0-9]+::value" path))
+                  (result-object (cl-cc.services:run-session-result "preview-combinable-regex-line-context-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context 0 :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t))))
+             (is (getf output :preview))
+             (is (getf output :use-regex))
+             (is (getf output :ignore-case))
+             (is (= (getf output :line-context) 0))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "TOKEN-42"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-occurrence-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-occurrence-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "dup gap dup tail" stream))
+           (let* ((input (format nil "preview ignore case 2nd occurrence patch file ~A::dup::done" path))
+                  (result-object (cl-cc.services:run-session-result "preview-occurrence-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "dup" :new-text "done" :preview t :occurrence 2 :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil))))
+             (is (getf output :preview))
+             (is (= (getf output :selected-occurrence) 2))
+             (is (= (getf output :total-matches) 2))
+             (is (= (getf output :match-count) 1))
+             (is (string= (uiop:read-file-string path) "dup gap dup tail"))))
       (when (probe-file path)
         (delete-file path)))))
 

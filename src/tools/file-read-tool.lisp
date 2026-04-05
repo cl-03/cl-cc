@@ -19,6 +19,10 @@
 (defparameter +file-read-range-separator+ "-"
   "file-read-tool 在文本输入里使用的行范围分隔符。")
 
+(defparameter +file-read-multi-range-separators+
+  '(#\, #\;)
+  "file-read-tool 在文本输入里支持的多段行范围分隔符。")
+
 (defun %strip-input-prefix (text prefixes)
   (loop for prefix in prefixes
         when (uiop:string-prefix-p prefix text)
@@ -48,16 +52,41 @@
                               (<= normalized-start normalized-end)))
                  (list :start-line normalized-start
                        :end-line (or normalized-end normalized-start)))))
-           (file-read-request (path &key start-line end-line)
+           (normalized-range-list (ranges)
+             (when ranges
+               (loop for range in ranges
+                     for normalized-range = (cond
+                                              ((and (listp range)
+                                                    (or (getf range :start-line)
+                                                        (getf range :startLine)))
+                                               (line-range-request (or (getf range :start-line)
+                                                                       (getf range :startLine))
+                                                                   :end-line (or (getf range :end-line)
+                                                                                  (getf range :endLine))))
+                                              (t nil))
+                     when normalized-range
+                       collect normalized-range
+                     else
+                       do (return nil))))
+           (file-read-request (path &key start-line end-line ranges)
              (let ((normalized-path (trim-text path))
-                   (range-request (and start-line
-                                       (line-range-request start-line :end-line end-line))))
+                   (single-range (and start-line
+                                      (line-range-request start-line :end-line end-line)))
+                   (multiple-ranges (normalized-range-list ranges)))
                (when (and normalized-path
                           (> (length normalized-path) 0)
-                          (or (null start-line) range-request))
-                 (list :path normalized-path
-                       :start-line (and range-request (getf range-request :start-line))
-                       :end-line (and range-request (getf range-request :end-line))))))
+                          (or (null start-line) single-range)
+                          (or (null ranges) multiple-ranges))
+                 (let ((all-ranges (append (and single-range (list single-range)) multiple-ranges)))
+                   (if (and all-ranges (> (length all-ranges) 1))
+                       (list :path normalized-path
+                             :start-line nil
+                             :end-line nil
+                             :ranges all-ranges)
+                       (let ((range-request (first all-ranges)))
+                         (list :path normalized-path
+                               :start-line (and range-request (getf range-request :start-line))
+                       :end-line (and range-request (getf range-request :end-line)))))))))
            (parse-line-range (text)
              (multiple-value-bind (start end foundp)
                  (cl-cc.tools::%split-once text +file-read-range-separator+)
@@ -66,11 +95,21 @@
                   (line-range-request start :end-line end))
                  (t
                   (line-range-request text)))))
-           (merge-path-and-range (path range-request)
-             (when range-request
-               (file-read-request path
-                                  :start-line (getf range-request :start-line)
-                                  :end-line (getf range-request :end-line))))
+           (parse-line-range-spec (text)
+             (let* ((segments (remove nil
+                                      (mapcar #'trim-text
+                                              (uiop:split-string text :separator +file-read-multi-range-separators+))))
+                    (ranges (and segments
+                                 (loop for segment in segments
+                                       for range-request = (parse-line-range segment)
+                                       when range-request
+                                         collect range-request
+                                       else
+                                         do (return nil)))))
+               (and ranges (> (length ranges) 0) ranges)))
+           (merge-path-and-ranges (path range-requests)
+             (when range-requests
+               (file-read-request path :ranges range-requests)))
            (parse-double-colon-request (text)
              (multiple-value-bind (path range foundp)
                  (cl-cc.tools::%split-once text "::")
@@ -80,31 +119,31 @@
                     (if (or (null trimmed-range)
                             (string= trimmed-range ""))
                         (file-read-request path)
-                        (merge-path-and-range path (parse-line-range trimmed-range)))))
+                        (merge-path-and-ranges path (parse-line-range-spec trimmed-range)))))
                  (t nil))))
            (parse-inline-range-request (text)
              (let ((last-colon (position #\: text :from-end t)))
                (when last-colon
                  (let ((path (subseq text 0 last-colon))
                        (suffix (subseq text (1+ last-colon))))
-                   (or (merge-path-and-range path (parse-line-range suffix))
+                   (or (merge-path-and-ranges path (parse-line-range-spec suffix))
                        (let ((previous-colon (position #\: text :from-end t :end last-colon)))
                          (when previous-colon
                            (let ((grep-path (subseq text 0 previous-colon))
                                  (line-number (subseq text (1+ previous-colon) last-colon)))
-                             (merge-path-and-range grep-path (parse-line-range line-number))))))))))
+                             (merge-path-and-ranges grep-path (parse-line-range-spec line-number))))))))))
            (parse-english-line-request (text)
              (loop for prefix in +file-read-line-prefixes+
                    for position = (search prefix text :test #'char-equal)
                    when position
-                     do (return (merge-path-and-range (subseq text 0 position)
-                                                      (parse-line-range (subseq text (+ position (length prefix))))))))
+                     do (return (merge-path-and-ranges (subseq text 0 position)
+                                                       (parse-line-range-spec (subseq text (+ position (length prefix))))))))
            (parse-chinese-line-request (text)
              (let ((marker (search "第" text :test #'char-equal))
                    (line-suffix (position #\行 text :from-end t)))
                (when (and marker line-suffix (< marker line-suffix))
-                 (merge-path-and-range (subseq text 0 marker)
-                                       (parse-line-range (subseq text (1+ marker) line-suffix))))))
+                 (merge-path-and-ranges (subseq text 0 marker)
+                                        (parse-line-range-spec (subseq text (1+ marker) line-suffix))))))
            (parse-text-request (text)
              (let ((stripped-text (%strip-input-prefix text +file-read-input-prefixes+)))
                (cond
@@ -120,7 +159,10 @@
             (getf input :path))
        (file-read-request (getf input :path)
                           :start-line (getf input :start-line)
-                          :end-line (getf input :end-line)))
+                          :end-line (getf input :end-line)
+                          :ranges (or (getf input :ranges)
+                                      (getf input :line-ranges)
+                                      (getf input :lineRanges))))
       (t
        (let ((text (trim-text input)))
          (cond
@@ -156,12 +198,34 @@
                                   line-number
                                   (nth (1- line-number) lines))))))
 
+(defun %file-read-multi-range-contents (contents ranges)
+  (let* ((lines (uiop:split-string (%normalized-file-read-lines contents) :separator '(#\Newline)))
+         (total-lines (length lines))
+         (emitted-lines '())
+         (seen-line-numbers (make-hash-table :test #'eql)))
+    (when (= total-lines 0)
+      (error (%file-read-tool-error "请求的起始行超出文件范围: 1")))
+    (dolist (range ranges)
+      (let ((start-line (getf range :start-line))
+            (end-line (getf range :end-line)))
+        (when (> start-line total-lines)
+          (error (%file-read-tool-error (format nil "请求的起始行超出文件范围: ~D" start-line))))
+        (loop for line-number from start-line to (min end-line total-lines)
+              unless (gethash line-number seen-line-numbers)
+                do (setf (gethash line-number seen-line-numbers) t)
+                   (push (format nil "~D:~A"
+                                 line-number
+                                 (nth (1- line-number) lines))
+                         emitted-lines))))
+    (format nil "~{~A~^~%~}" (nreverse emitted-lines))))
+
 (defun file-read-tool (input)
   "读取指定文件并返回其文本内容。"
   (let* ((request (%normalized-file-read-input input))
          (path (and request (if (listp request) (getf request :path) request)))
          (start-line (and (listp request) (getf request :start-line)))
-         (end-line (and (listp request) (getf request :end-line))))
+         (end-line (and (listp request) (getf request :end-line)))
+         (ranges (and (listp request) (getf request :ranges))))
     (unless request
    (error (%file-read-tool-error
         (if (or (null input)
@@ -172,14 +236,16 @@
             (stringp (getf input :path))
             (string= (string-trim '(#\Space #\Tab #\Newline #\Return) (getf input :path)) "")))
          "路径为空"
-         "请求格式无效，期望 `<path>`、`<path>:<line>`、`<path>:<start>-<end>` 或 `read file <path> :: <start>-<end>`"))))
+         "请求格式无效，期望 `<path>`、`<path>:<line>`、`<path>:<start>-<end>`、`<path>:<start>-<end>,<line>` 或 `read file <path> :: <ranges>`"))))
     (unless (probe-file path)
       (error (%file-read-tool-error (format nil "文件不存在: ~A" path))))
     (handler-case
         (let ((contents (uiop:read-file-string path)))
-          (if start-line
+          (if ranges
+              (%file-read-multi-range-contents contents ranges)
+              (if start-line
               (%file-read-line-contents contents start-line end-line)
-              contents))
+                  contents)))
       (cl-cc.lib:cl-cc-error (condition)
         (error condition))
       (error ()

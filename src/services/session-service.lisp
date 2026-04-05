@@ -17,6 +17,7 @@
                    :history-index history-index
                    :context-summary nil
                    :tasks nil
+                   :todo-list nil
                    :permission-snapshot nil
                    :status :active
                    :version "0.1")))
@@ -40,6 +41,7 @@
 (defun %make-session-start-result (session duration-seconds)
   (let* ((history-index (cl-cc.models:session-history-index session))
          (tasks (cl-cc.models:session-tasks session))
+         (todo-list (cl-cc.models:session-todo-list session))
          (session-path (cl-cc.models:session-permission-snapshot session))
          (payload (list :session-id (cl-cc.models:session-id session)
                         :history-index history-index
@@ -50,6 +52,8 @@
                         :exit-code 0)))
     (when tasks
       (setf payload (append payload (list :tasks tasks))))
+    (when todo-list
+      (setf payload (append payload (list :todo-list todo-list))))
     (cl-cc.lib:make-result
      :status :success
      :payload payload
@@ -147,6 +151,7 @@
                     :history-index nil
                     :context-summary nil
                     :tasks nil
+                    :todo-list nil
                     :permission-snapshot nil
                     :status :active
                     :version "0.1"))))
@@ -156,6 +161,7 @@
 
 (defun %make-session-resume-result (session duration-seconds)
   (let* ((tasks (cl-cc.models:session-tasks session))
+         (todo-list (cl-cc.models:session-todo-list session))
          (payload (list :session-id (cl-cc.models:session-id session)
                         :history-index (cl-cc.models:session-history-index session)
                         :session-status (cl-cc.models:session-status session)
@@ -163,10 +169,12 @@
                         :exit-code 0)))
     (when tasks
       (setf payload (append payload (list :tasks tasks))))
-  (cl-cc.lib:make-result
-   :status :success
-   :payload payload
-   :message (%session-resume-message session))))
+    (when todo-list
+      (setf payload (append payload (list :todo-list todo-list))))
+    (cl-cc.lib:make-result
+     :status :success
+     :payload payload
+     :message (%session-resume-message session))))
 
 (defun resume-session-result (session-id)
   "恢复会话并返回结构化结果对象。"
@@ -242,6 +250,14 @@
       (t
        (cl-cc.models:session-tasks session)))))
 
+(defun %session-run-todo-list (session)
+  (let ((summary (cl-cc.models:session-context-summary session)))
+    (cond
+      ((and (listp summary) (member :todo-list summary))
+       (getf summary :todo-list))
+      (t
+       (cl-cc.models:session-todo-list session)))))
+
 (defun %session-run-exit-code (session)
   (if (eq (%session-run-execution-status session) :success)
       0
@@ -270,12 +286,13 @@
   (let* ((session-path (cl-cc.models:session-permission-snapshot session))
          (input (%session-run-input session))
          (execution-status (%session-run-execution-status session))
-      (tasks (%session-run-tasks session))
-      (git-root (%session-run-git-root session))
-      (git-branch (%session-run-git-branch session))
-      (git-dirty (%session-run-git-dirty session))
-      (git-status-lines (%session-run-git-status-lines session))
-      (git-recent-commits (%session-run-git-recent-commits session))
+         (tasks (%session-run-tasks session))
+         (todo-list (%session-run-todo-list session))
+         (git-root (%session-run-git-root session))
+         (git-branch (%session-run-git-branch session))
+         (git-dirty (%session-run-git-dirty session))
+         (git-status-lines (%session-run-git-status-lines session))
+         (git-recent-commits (%session-run-git-recent-commits session))
         (result (%session-run-result-summary session))
         (tool-results (%session-run-tool-results session))
         (selected-tools (%session-run-selected-tools session))
@@ -300,6 +317,8 @@
                         :exit-code (%session-run-exit-code session))))
     (when tasks
       (setf payload (append payload (list :tasks tasks))))
+    (when todo-list
+      (setf payload (append payload (list :todo-list todo-list))))
     (cl-cc.lib:make-result
      :status :success
      :payload payload

@@ -39,7 +39,7 @@
                          '("预览编辑文件" "试运行编辑文件" "预览替换文件"))
               :mode (%file-edit-mode :preview t :use-regex nil))
         (list :prefixes (%file-edit-basic-prefixes
-                         '("edit file " "replace in file " "replace text in file " "modify file ")
+                         '("edit file " "replace in file " "replace text in file " "modify file " "patch file " "update file ")
                          '("编辑文件" "替换文件" "替换文件内容" "修改文件"))
               :mode (%file-edit-mode :preview nil :use-regex nil)))
   "file-edit-tool 基础自然语言入口与模式映射。")
@@ -56,11 +56,18 @@
 
 (defun %file-edit-line-context-prefix-patterns (english-prefixes chinese-prefixes)
   (append (loop for prefix in english-prefixes
-        append (list (list :prefix prefix :suffix " edit file ")
-             (list :prefix prefix :suffix " replace in file ")))
+        append (loop for suffix in '(" edit file "
+                                     " replace in file "
+                                     " replace text in file "
+                                     " modify file "
+                                     " patch file "
+                                     " update file ")
+                     collect (list :prefix prefix :suffix suffix)))
       (loop for prefix in chinese-prefixes
         append (list (list :prefix prefix :suffix "行编辑文件")
-             (list :prefix prefix :suffix "行替换文件")))))
+                     (list :prefix prefix :suffix "行替换文件")
+                     (list :prefix prefix :suffix "行替换文件内容")
+                     (list :prefix prefix :suffix "行修改文件")))))
 
 (defparameter +file-edit-line-context-mode-specs+
   (list (list :patterns (%file-edit-line-context-prefix-patterns '("preview regex context " "preview regex line context ")
@@ -88,7 +95,8 @@
             (list (list :prefix "" :mode (%file-edit-mode :preview nil :use-regex use-regex))))))
 
 (defparameter +file-edit-standard-action-suffixes+
-  '("edit file " "replace in file " "编辑文件" "替换文件")
+  '("edit file " "replace in file " "replace text in file " "modify file " "patch file " "update file "
+    "编辑文件" "替换文件" "替换文件内容" "修改文件")
   "file-edit-tool 组合解析器共享的文件编辑动作后缀。")
 
 (defparameter +file-edit-combinable-replace-all-compatibility-action-suffixes+
@@ -100,7 +108,7 @@
   "组合解析器从命中的 flag spec 同步到 mode plist 的字段列表。")
 
 (defparameter +file-edit-shared-combinable-flag-specs+
-  (list (list :prefixes '("ignore case " "case insensitive " "忽略大小写")
+  (list (list :prefixes '("ignore case " "case insensitive " "case-insensitive " "忽略大小写")
       :ignore-case t)
     (list :prefixes '("whole word " "整词")
       :whole-word t)
@@ -287,6 +295,86 @@
     (when (getf flag-spec key)
       (setf (getf mode key) t))))
 
+(defun %parse-file-edit-combinable-line-context (text)
+  (labels ((parse-english-prefix (prefix)
+             (when (uiop:string-prefix-p prefix text)
+               (let ((remainder (subseq text (length prefix))))
+                 (multiple-value-bind (value position)
+                     (parse-integer remainder :junk-allowed t)
+                   (when (and value
+                              position
+                              (%valid-file-edit-line-context-p value))
+                     (values (string-left-trim +file-edit-trim-characters+
+                                               (subseq remainder position))
+                             value))))))
+           (parse-chinese-prefix ()
+             (when (uiop:string-prefix-p "上下文" text)
+               (let ((remainder (string-left-trim +file-edit-trim-characters+
+                                                 (subseq text (length "上下文")))))
+                 (multiple-value-bind (value position)
+                     (parse-integer remainder :junk-allowed t)
+                   (when (and value
+                              position
+                              (%valid-file-edit-line-context-p value))
+                     (let* ((after-number (subseq remainder position))
+                            (after-unit (if (and (> (length after-number) 0)
+                                                 (char= (char after-number 0) #\行))
+                                            (subseq after-number 1)
+                                            after-number)))
+                       (values (string-left-trim +file-edit-trim-characters+ after-unit)
+                               value))))))))
+    (multiple-value-bind (remainder line-context)
+        (parse-english-prefix "line context ")
+      (if remainder
+          (values remainder line-context)
+          (multiple-value-bind (remainder line-context)
+              (parse-english-prefix "context ")
+            (if remainder
+                (values remainder line-context)
+                (parse-chinese-prefix)))))))
+
+(defun %parse-file-edit-combinable-occurrence (text)
+  (labels ((parse-english-prefix (prefix)
+             (when (uiop:string-prefix-p prefix text)
+               (let* ((remainder (subseq text (length prefix)))
+                      (space-position (or (position #\Space remainder)
+                                          (length remainder)))
+                      (number-text (subseq remainder 0 space-position))
+                      (occurrence (%parse-file-edit-occurrence number-text)))
+                 (when occurrence
+                   (values (string-left-trim +file-edit-trim-characters+
+                                             (subseq remainder space-position))
+                           occurrence)))))
+           (parse-english-ordinal ()
+             (multiple-value-bind (value position)
+                 (parse-integer text :junk-allowed t)
+               (when (and value position (>= value 1))
+                 (let ((remainder (subseq text position)))
+                   (loop for suffix in '("st occurrence " "nd occurrence " "rd occurrence " "th occurrence ")
+                         when (uiop:string-prefix-p suffix remainder)
+                           do (return (values (subseq remainder (length suffix))
+                                              value)))))))
+           (parse-chinese-prefix ()
+             (when (uiop:string-prefix-p "第" text)
+               (let ((remainder (subseq text 1)))
+                 (multiple-value-bind (value position)
+                     (parse-integer remainder :junk-allowed t)
+                   (when (and value position (>= value 1))
+                     (let ((after-number (subseq remainder position)))
+                       (when (uiop:string-prefix-p "处" after-number)
+                         (values (string-left-trim +file-edit-trim-characters+
+                                                   (subseq after-number 1))
+                                 value)))))))))
+    (multiple-value-bind (remainder occurrence)
+        (parse-english-prefix "occurrence ")
+      (if remainder
+          (values remainder occurrence)
+          (multiple-value-bind (remainder occurrence)
+              (parse-english-ordinal)
+            (if remainder
+                (values remainder occurrence)
+                (parse-chinese-prefix)))))))
+
 (defun %parse-file-edit-combinable-mode (text base-prefixes flag-specs action-suffixes &key replace-all-compatibility-action-suffixes)
   (loop for base in base-prefixes
         for base-prefix = (getf base :prefix)
@@ -297,12 +385,28 @@
                (loop
                  do (multiple-value-bind (stripped-text flag-spec)
                         (%parse-file-edit-combinable-flag remainder flag-specs)
-                      (if stripped-text
-                          (progn
-                            (setf remainder stripped-text
-                                  matched-flag-p t)
-                            (setf mode (%apply-file-edit-flag-spec-to-mode mode flag-spec)))
-                          (return))))
+                      (cond
+                        (stripped-text
+                         (setf remainder stripped-text
+                               matched-flag-p t)
+                         (setf mode (%apply-file-edit-flag-spec-to-mode mode flag-spec)))
+                        (t
+                         (multiple-value-bind (occurrence-remainder occurrence)
+                             (%parse-file-edit-combinable-occurrence remainder)
+                           (cond
+                             (occurrence-remainder
+                              (setf remainder occurrence-remainder
+                                    matched-flag-p t
+                                    (getf mode :occurrence) occurrence))
+                             (t
+                              (multiple-value-bind (context-remainder line-context)
+                                  (%parse-file-edit-combinable-line-context remainder)
+                                (if context-remainder
+                                    (progn
+                                      (setf remainder context-remainder
+                                            matched-flag-p t
+                                            (getf mode :line-context) line-context))
+                                    (return))))))))))
                (when matched-flag-p
                  (let ((action-stripped (%strip-input-prefix remainder action-suffixes)))
                    (cond

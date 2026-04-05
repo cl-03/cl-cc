@@ -9,6 +9,9 @@
 (defparameter +grep-tool-max-results+ 50
   "grep-tool 返回的最大匹配条数，避免一次结果过长。")
 
+(defparameter *grep-command-runner* nil
+  "可替换的外部 grep 执行器，签名为 (query root max-results)。")
+
 (defun %grep-tool-message (detail)
   (format nil "代码搜索失败: ~A" detail))
 
@@ -62,6 +65,10 @@
   (%portable-path-string (or (ignore-errors (truename path))
                              (pathname path))))
 
+(defun %parent-directory-pathname (path)
+  (uiop:ensure-directory-pathname
+   (make-pathname :name nil :type nil :defaults path)))
+
 (defun %normalized-search-root (root)
   (let* ((base (uiop:ensure-directory-pathname (uiop:getcwd)))
          (resolved (if root
@@ -108,6 +115,92 @@
        (subseq file-string (length directory-root-string)))
       (t file-string))))
 
+(defun %grep-command-context (root)
+  (let ((resolved-root (%normalized-search-root root)))
+    (if (uiop:directory-exists-p resolved-root)
+        (values resolved-root ".")
+        (values (%parent-directory-pathname resolved-root)
+                (file-namestring resolved-root)))))
+
+(defun %grep-command-arguments (query target max-results)
+  (list "--color" "never"
+        "--no-heading"
+        "--with-filename"
+        "--line-number"
+        "--fixed-strings"
+        "--max-count" (write-to-string max-results)
+        "--no-messages"
+        "--"
+        query
+        target))
+
+(defun %trim-grep-command-output (text)
+  (let ((trimmed (and text (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
+    (and trimmed
+         (> (length trimmed) 0)
+         trimmed)))
+
+(defun %normalize-grep-command-path (path)
+  (let ((portable (%portable-path-string path)))
+    (cond
+      ((uiop:string-prefix-p "./" portable)
+       (subseq portable 2))
+      ((uiop:string-prefix-p ".\\" portable)
+       (subseq portable 2))
+      (t portable))))
+
+(defun %grep-command-match-line (line root)
+  (multiple-value-bind (path remainder path-found-p)
+      (%split-once line ":")
+    (when (and path-found-p remainder)
+      (multiple-value-bind (line-number text line-found-p)
+          (%split-once remainder ":")
+        (when (and line-found-p
+                   line-number
+                   (> (length line-number) 0))
+          (let* ((relative-path (%normalize-grep-command-path path))
+                 (absolute-path (merge-pathnames relative-path (%normalized-search-root root))))
+            (format nil "~A:~A:~A"
+                    (%relative-match-path absolute-path root)
+                    line-number
+                    text)))))))
+
+(defun %grep-command-result-lines (stdout root)
+  (sort (remove nil
+                (mapcar (lambda (line)
+                          (%grep-command-match-line line root))
+                        (%normalized-file-lines (or stdout ""))))
+        #'string<))
+
+#+sbcl
+(defun %default-grep-command-runner (query root max-results)
+  (multiple-value-bind (directory target)
+      (%grep-command-context root)
+    (handler-case
+        (let* ((process (sb-ext:run-program "rg"
+                                            (%grep-command-arguments query target max-results)
+                                            :search t
+                                            :directory directory
+                                            :output :stream
+                                            :error :stream
+                                            :input nil
+                                            :wait nil)))
+          (sb-ext:process-wait process)
+          (list :stdout (%trim-grep-command-output
+                         (uiop:slurp-stream-string (sb-ext:process-output process)))
+                :stderr (%trim-grep-command-output
+                         (uiop:slurp-stream-string (sb-ext:process-error process)))
+                :exit-code (sb-ext:process-exit-code process)))
+      (error ()
+        nil))))
+
+#-sbcl
+(defun %default-grep-command-runner (query root max-results)
+  (declare (ignore query root max-results))
+  nil)
+
+(setf *grep-command-runner* #'%default-grep-command-runner)
+
 (defun %normalized-file-lines (contents)
   (labels ((normalize-line-endings (text)
              (with-output-to-string (stream)
@@ -137,15 +230,26 @@
       nil)))
 
 (defun %grep-tool-result-lines (query root)
-  (let ((matches '())
-        (truncated-p nil)
-        (resolved-root (%normalized-search-root root)))
-    (dolist (file (%search-target-files resolved-root))
-      (dolist (line (%file-match-lines file query resolved-root))
-        (if (< (length matches) +grep-tool-max-results+)
-            (push line matches)
-            (setf truncated-p t))))
-    (values (nreverse matches) truncated-p)))
+  (let* ((command-result (and *grep-command-runner*
+                              (funcall *grep-command-runner* query root +grep-tool-max-results+)))
+         (command-exit-code (and command-result (getf command-result :exit-code))))
+    (when (member command-exit-code '(0 1))
+      (let* ((command-matches (%grep-command-result-lines (getf command-result :stdout) root))
+             (truncated-p (> (length command-matches) +grep-tool-max-results+)))
+        (return-from %grep-tool-result-lines
+          (values (if truncated-p
+                      (subseq command-matches 0 +grep-tool-max-results+)
+                      command-matches)
+                  truncated-p))))
+    (let ((matches '())
+          (truncated-p nil)
+          (resolved-root (%normalized-search-root root)))
+      (dolist (file (%search-target-files resolved-root))
+        (dolist (line (%file-match-lines file query resolved-root))
+          (if (< (length matches) +grep-tool-max-results+)
+              (push line matches)
+              (setf truncated-p t))))
+      (values (nreverse matches) truncated-p))))
 
 (defun %grep-tool-render-result (matches truncated-p)
   (cond

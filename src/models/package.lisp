@@ -7,8 +7,9 @@
            :tool-definition :tool-id :tool-summary :tool-handler-function :tool-input-schema :tool-output-schema :tool-error-output-schema
            :tool-failure-modes :tool-permission-profile
            :session-state :session-id :session-created-at :session-updated-at
-           :session-history-index :session-context-summary :session-tasks :session-permission-snapshot
+           :session-history-index :session-context-summary :session-tasks :session-todo-list :session-permission-snapshot
            :session-status :session-version
+           :*active-session*
            :execution-cycle :cycle-id :cycle-command-name :cycle-input-payload
            :cycle-selected-tools :cycle-context-before :cycle-context-after
            :cycle-result-status :cycle-result-summary

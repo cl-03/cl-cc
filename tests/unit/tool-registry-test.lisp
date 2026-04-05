@@ -33,10 +33,13 @@
     (is (string= (cl-cc.models:tool-id definition) "file-read-tool"))
     (is (string= (cl-cc.models:tool-summary definition) "读取指定文件内容，用于最小可用的只读文件检索"))
     (is (equal (cl-cc.models:tool-input-schema definition)
-               '(:text "path string with optional line range" :closed t
+               '(:text "path string with optional line range(s)" :closed t
                  :json ((:name "path" :summary "待读取的文件路径" :type :string)
                         (:name "startLine" :summary "起始行号，缺省时读取整个文件" :type :integer :minimum 1 :required nil :nullable t)
-                        (:name "endLine" :summary "结束行号，缺省时等于 startLine" :type :integer :minimum 1 :required nil :nullable t)))))
+                        (:name "endLine" :summary "结束行号，缺省时等于 startLine" :type :integer :minimum 1 :required nil :nullable t)
+                        (:name "ranges" :summary "多段行范围列表；提供时按给定顺序拼接输出且自动去重重复行" :type :array :required nil :nullable t :collection t :closed t
+                         :fields ((:name "startLine" :summary "行范围起始行号" :type :integer :minimum 1)
+                                  (:name "endLine" :summary "行范围结束行号" :type :integer :minimum 1)))))))
     (is (equal (cl-cc.models:tool-output-schema definition)
                '(:text "file contents" :closed t :json ((:name "result" :summary "文件读取结果内容" :source :raw-result :type :string)))))
     (is (equal (cl-cc.models:tool-error-output-schema definition)
@@ -62,6 +65,49 @@
                  :json ((:name "error" :summary "搜索失败摘要消息" :source :error-message :type :string)
                         (:name "code" :summary "稳定错误码" :source :error-code :type :string)))))
     (is (eq (cl-cc.models:tool-permission-profile definition) :file-read))))
+
+(test glob-tool-metadata
+  (let ((definition (cl-cc.tools:find-tool-definition "glob-tool")))
+    (is (typep definition 'cl-cc.models:tool-definition))
+    (is (string= (cl-cc.models:tool-id definition) "glob-tool"))
+    (is (string= (cl-cc.models:tool-summary definition) "在指定目录树下按 glob 模式匹配文件，用于最小可用的文件发现"))
+    (is (equal (cl-cc.models:tool-input-schema definition)
+               '(:text "glob pattern or `pattern :: root`" :closed t
+                 :json ((:name "pattern" :summary "待匹配的 glob 模式" :type :string)
+                        (:name "root" :summary "搜索根路径，缺省为当前工作目录" :type :string :required nil :nullable t)))))
+    (is (equal (cl-cc.models:tool-output-schema definition)
+               '(:text "matched file paths" :closed t
+                 :json ((:name "result" :summary "匹配结果文本，每行一条相对路径记录" :source :raw-result :type :string)))))
+    (is (equal (cl-cc.models:tool-error-output-schema definition)
+               '(:text "glob search failed output" :closed t
+                 :json ((:name "error" :summary "glob 匹配失败摘要消息" :source :error-message :type :string)
+                        (:name "code" :summary "稳定错误码" :source :error-code :type :string)))))
+    (is (eq (cl-cc.models:tool-permission-profile definition) :file-read))))
+
+(test todo-write-tool-metadata
+  (let ((definition (cl-cc.tools:find-tool-definition "todo-write-tool")))
+    (is (typep definition 'cl-cc.models:tool-definition))
+    (is (string= (cl-cc.models:tool-id definition) "todo-write-tool"))
+    (is (string= (cl-cc.models:tool-summary definition) "更新当前会话的结构化待办列表，用于最小可用的进度跟踪"))
+    (is (equal (cl-cc.models:tool-input-schema definition)
+               '(:text "todo list update request" :closed t
+                 :json ((:name "todos" :summary "更新后的待办列表" :type :array :closed t :collection t :fields ((:name "content" :summary "待办项内容" :type :string)
+                                                                                                                    (:name "status" :summary "待办项状态" :type :string :enum ("pending" "in_progress" "completed"))
+                                                                                                                    (:name "activeForm" :summary "待办项执行中的描述" :type :string)))))))
+    (is (equal (cl-cc.models:tool-output-schema definition)
+               '(:text "todo write result" :closed t
+                 :json ((:name "result" :summary "待办列表更新摘要" :source (:raw-result-field :summary) :type :string)
+                        (:name "oldTodos" :summary "更新前的待办列表" :source (:raw-result-field :old-todos) :type :array :required nil :nullable t :closed t :collection t :fields ((:name "content" :summary "待办项内容" :type :string)
+                                                                                                                                                                                       (:name "status" :summary "待办项状态" :type :string)
+                                                                                                                                                                                       (:name "activeForm" :summary "待办项执行中的描述" :type :string)))
+                        (:name "newTodos" :summary "更新后的待办列表" :source (:raw-result-field :new-todos) :type :array :closed t :collection t :fields ((:name "content" :summary "待办项内容" :type :string)
+                                                                                                                                                                (:name "status" :summary "待办项状态" :type :string)
+                                                                                                                                                                (:name "activeForm" :summary "待办项执行中的描述" :type :string)))))))
+    (is (equal (cl-cc.models:tool-error-output-schema definition)
+               '(:text "todo write failed output" :closed t
+                 :json ((:name "error" :summary "待办列表写入失败摘要消息" :source :error-message :type :string)
+                        (:name "code" :summary "稳定错误码" :source :error-code :type :string)))))
+    (is (eq (cl-cc.models:tool-permission-profile definition) :default))))
 
 (test shell-tool-metadata
   (let ((definition (cl-cc.tools:find-tool-definition "shell-tool")))
@@ -303,7 +349,11 @@
     (is (string= (cl-cc.models:tool-id definition) "directory-list-tool"))
     (is (string= (cl-cc.models:tool-summary definition) "列出指定目录的子项，用于最小可用的只读目录检索"))
     (is (equal (cl-cc.models:tool-input-schema definition)
-               '(:text "path string" :closed t :json ((:name "input" :summary "待列举的目录路径" :type :string)))))
+               '(:text "path string with optional recursive/depth/contains modifiers" :closed t
+                 :json ((:name "path" :summary "待列举的目录路径" :type :string)
+                        (:name "recursive" :summary "是否递归列举子目录，缺省为 false" :type :boolean :required nil :nullable t)
+                        (:name "depth" :summary "递归列举的最大深度，缺省为不限制" :type :integer :required nil :nullable t :minimum 1)
+                        (:name "contains" :summary "仅返回路径中包含该子串的条目，缺省为不过滤" :type :string :required nil :nullable t)))))
     (is (equal (cl-cc.models:tool-output-schema definition)
                '(:text "directory entries" :closed t :json ((:name "result" :summary "目录列举结果内容" :source :raw-result :type :string)))))
     (is (equal (cl-cc.models:tool-error-output-schema definition)

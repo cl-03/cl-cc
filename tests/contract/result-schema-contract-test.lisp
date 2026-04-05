@@ -124,6 +124,14 @@
         (delete-file match-file))
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore))))
+  (let ((session-run-todo-result (cl-cc.services:run-session-result
+                                  "schema-session"
+                                  :input "todo write Implement todo tool | in_progress | Implementing todo tool ;; Run tests | pending | Running tests")))
+    (expect-command-schema-valid "session run" session-run-todo-result)
+    (is (equal (getf (cl-cc.lib:result-payload session-run-todo-result) :todo-list)
+               '((:content "Implement todo tool" :status "in_progress" :active-form "Implementing todo tool")
+                 (:content "Run tests" :status "pending" :active-form "Running tests"))))
+    (is (cl-cc.services:session-run-result-conforms-p session-run-todo-result)))
   (let ((session-run-override-result (cl-cc.services:run-session-result "schema-session"
                                                                         :input "read file README.md"
                                                                         :tool-ids '("echo-tool"))))

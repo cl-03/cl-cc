@@ -105,7 +105,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 - Summary: 恢复已有会话
 - Aliases: `cl-cc s resume`
 - Metadata: `group=session`, `source=builtin`
-- Output Schema: `text`: session resume message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `durationSeconds`, `exitCode` [closed]
+- Output Schema: `text`: session resume message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `todoList`, `durationSeconds`, `exitCode` [closed]
 - JSON Fields:
   - `status`: 结果状态，当前固定为 success [type: `string`] [allowed: `success`]
   - `sessionId`: 恢复后的会话 ID [type: `string`]
@@ -130,6 +130,10 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
     - `stallPromptLine`: 后台任务触发 stall 检测时的最后一行输出；未检测到时为 null [type: `string`] [optional] [nullable]
     - `terminationReason`: 后台任务终止原因；运行中时为 null [type: `string`] [optional] [nullable]
     - `endedAt`: 后台任务终止时间；运行中时为 null [type: `string`] [optional] [nullable]
+  - `todoList`: 当前会话的结构化待办列表；无待办时该字段可省略 [type: `array`] [optional] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`] [allowed: `pending`, `in_progress`, `completed`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
   - `durationSeconds`: 本次 session resume 执行时长（秒） [type: `number`] [min: `0`]
   - `exitCode`: 命令退出码 [type: `integer`] [min: `0`] [max: `255`]
 - Options:
@@ -141,7 +145,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 - Summary: 恢复会话并执行一步最小 session loop，可携带用户输入
 - Aliases: `cl-cc s run`
 - Metadata: `group=session`, `source=builtin`, `requires-auth`
-- Output Schema: `text`: session run message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `input`, `executionStatus`, `selectedTools`, `executionPlan`, `gitRoot`, `gitBranch`, `gitDirty`, `gitStatusLines`, `gitRecentCommits`, `result`, `toolResults`, `sessionPath`, `saved`, `durationSeconds`, `exitCode` [closed]
+- Output Schema: `text`: session run message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `todoList`, `input`, `executionStatus`, `selectedTools`, `executionPlan`, `gitRoot`, `gitBranch`, `gitDirty`, `gitStatusLines`, `gitRecentCommits`, `result`, `toolResults`, `sessionPath`, `saved`, `durationSeconds`, `exitCode` [closed]
 - JSON Fields:
   - `status`: 结果状态，当前固定为 success [type: `string`] [allowed: `success`]
   - `sessionId`: 执行后的会话 ID [type: `string`]
@@ -166,6 +170,10 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
     - `stallPromptLine`: 后台任务触发 stall 检测时的最后一行输出；未检测到时为 null [type: `string`] [optional] [nullable]
     - `terminationReason`: 后台任务终止原因；运行中时为 null [type: `string`] [optional] [nullable]
     - `endedAt`: 后台任务终止时间；运行中时为 null [type: `string`] [optional] [nullable]
+  - `todoList`: 当前会话的结构化待办列表；无待办时该字段可省略 [type: `array`] [optional] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`] [allowed: `pending`, `in_progress`, `completed`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
   - `input`: 本次 session run 实际使用的用户输入，缺失时为 null [type: `string`] [optional] [nullable]
   - `executionStatus`: 本次 session run 的执行状态 [type: `string`] [allowed: `success`, `failed`]
   - `selectedTools`: 本次 session run 最终采用的工具顺序 [type: `array`] [min-items: `1`] [optional] [nullable]
@@ -195,6 +203,17 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
       - `grep-tool.result`: 搜索结果文本，每行一条匹配记录 [type: `string`]
       - `grep-tool.error`: 搜索失败摘要消息 [type: `string`]
       - `grep-tool.code`: 稳定错误码 [type: `string`]
+      - `todo-write-tool.result`: 待办列表更新摘要 [type: `string`]
+      - `todo-write-tool.oldTodos`: 更新前的待办列表 [type: `array`] [optional] [nullable] [closed]
+        - `content`: 待办项内容 [type: `string`]
+        - `status`: 待办项状态 [type: `string`]
+        - `activeForm`: 待办项执行中的描述 [type: `string`]
+      - `todo-write-tool.newTodos`: 更新后的待办列表 [type: `array`] [closed]
+        - `content`: 待办项内容 [type: `string`]
+        - `status`: 待办项状态 [type: `string`]
+        - `activeForm`: 待办项执行中的描述 [type: `string`]
+      - `todo-write-tool.error`: 待办列表写入失败摘要消息 [type: `string`]
+      - `todo-write-tool.code`: 稳定错误码 [type: `string`]
       - `file-write-tool.result`: 文件写入结果摘要 [type: `string`]
       - `file-write-tool.error`: 文件写入失败摘要消息 [type: `string`]
       - `file-write-tool.code`: 稳定错误码 [type: `string`]
@@ -384,7 +403,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
       - `shell-task-output-tool.error`: 后台 shell 任务输出失败摘要消息 [type: `string`]
       - `shell-task-output-tool.code`: 稳定错误码 [type: `string`]
     - `error`: 失败时的人类可读摘要，成功时为 null [type: `string`] [optional] [nullable]
-    - `errorCode`: 稳定错误码，成功时为 null [type: `string`] [allowed: `FAIL`, `PERMISSION-DENIED`, `TOOL-NOT-FOUND`, `FILE-READ-FAILED`, `DIRECTORY-LIST-FAILED`, `FILE-WRITE-FAILED`, `FILE-EDIT-FAILED`, `GREP-SEARCH-FAILED`, `SHELL-EXECUTION-FAILED`] [optional] [nullable]
+    - `errorCode`: 稳定错误码，成功时为 null [type: `string`] [allowed: `FAIL`, `PERMISSION-DENIED`, `TOOL-NOT-FOUND`, `FILE-READ-FAILED`, `DIRECTORY-LIST-FAILED`, `FILE-WRITE-FAILED`, `FILE-EDIT-FAILED`, `GREP-SEARCH-FAILED`, `TODO-WRITE-FAILED`, `SHELL-EXECUTION-FAILED`] [optional] [nullable]
   - `sessionPath`: 若请求持久化，则为写入的快照路径 [type: `string`] [optional] [nullable]
   - `saved`: 是否已将新会话快照写入 sessionPath [type: `boolean`] [optional] [nullable]
   - `durationSeconds`: 本次 session run 执行时长（秒） [type: `number`] [min: `0`]
@@ -400,7 +419,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 - Summary: 启动新会话
 - Aliases: `cl-cc s start`
 - Metadata: `group=session`, `source=builtin`
-- Output Schema: `text`: session start message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `sessionPath`, `saved`, `durationSeconds`, `exitCode` [closed]
+- Output Schema: `text`: session start message; `json`: `status`, `sessionId`, `historyIndex`, `sessionStatus`, `tasks`, `todoList`, `sessionPath`, `saved`, `durationSeconds`, `exitCode` [closed]
 - JSON Fields:
   - `status`: 结果状态，当前固定为 success [type: `string`] [allowed: `success`]
   - `sessionId`: 新会话 ID [type: `string`]
@@ -425,6 +444,10 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
     - `stallPromptLine`: 后台任务触发 stall 检测时的最后一行输出；未检测到时为 null [type: `string`] [optional] [nullable]
     - `terminationReason`: 后台任务终止原因；运行中时为 null [type: `string`] [optional] [nullable]
     - `endedAt`: 后台任务终止时间；运行中时为 null [type: `string`] [optional] [nullable]
+  - `todoList`: 当前会话的结构化待办列表；无待办时该字段可省略 [type: `array`] [optional] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`] [allowed: `pending`, `in_progress`, `completed`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
   - `sessionPath`: 若请求持久化，则为写入的快照路径 [type: `string`] [optional] [nullable]
   - `saved`: 是否已将新会话快照写入 sessionPath [type: `boolean`] [optional] [nullable]
   - `durationSeconds`: 本次 session start 执行时长（秒） [type: `number`] [min: `0`]
@@ -481,6 +504,17 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
         - `grep-tool.result`: 搜索结果文本，每行一条匹配记录 [type: `string`]
         - `grep-tool.error`: 搜索失败摘要消息 [type: `string`]
         - `grep-tool.code`: 稳定错误码 [type: `string`]
+        - `todo-write-tool.result`: 待办列表更新摘要 [type: `string`]
+        - `todo-write-tool.oldTodos`: 更新前的待办列表 [type: `array`] [optional] [nullable] [closed]
+          - `content`: 待办项内容 [type: `string`]
+          - `status`: 待办项状态 [type: `string`]
+          - `activeForm`: 待办项执行中的描述 [type: `string`]
+        - `todo-write-tool.newTodos`: 更新后的待办列表 [type: `array`] [closed]
+          - `content`: 待办项内容 [type: `string`]
+          - `status`: 待办项状态 [type: `string`]
+          - `activeForm`: 待办项执行中的描述 [type: `string`]
+        - `todo-write-tool.error`: 待办列表写入失败摘要消息 [type: `string`]
+        - `todo-write-tool.code`: 稳定错误码 [type: `string`]
         - `file-write-tool.result`: 文件写入结果摘要 [type: `string`]
         - `file-write-tool.error`: 文件写入失败摘要消息 [type: `string`]
         - `file-write-tool.code`: 稳定错误码 [type: `string`]
@@ -670,7 +704,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
         - `shell-task-output-tool.error`: 后台 shell 任务输出失败摘要消息 [type: `string`]
         - `shell-task-output-tool.code`: 稳定错误码 [type: `string`]
       - `error`: 失败时的人类可读摘要，成功时为 null [type: `string`] [optional] [nullable]
-      - `errorCode`: 稳定错误码，成功时为 null [type: `string`] [allowed: `FAIL`, `PERMISSION-DENIED`, `TOOL-NOT-FOUND`, `FILE-READ-FAILED`, `DIRECTORY-LIST-FAILED`, `FILE-WRITE-FAILED`, `FILE-EDIT-FAILED`, `GREP-SEARCH-FAILED`, `SHELL-EXECUTION-FAILED`] [optional] [nullable]
+      - `errorCode`: 稳定错误码，成功时为 null [type: `string`] [allowed: `FAIL`, `PERMISSION-DENIED`, `TOOL-NOT-FOUND`, `FILE-READ-FAILED`, `DIRECTORY-LIST-FAILED`, `FILE-WRITE-FAILED`, `FILE-EDIT-FAILED`, `GREP-SEARCH-FAILED`, `TODO-WRITE-FAILED`, `SHELL-EXECUTION-FAILED`] [optional] [nullable]
 - Options:
   - -o, --output-format <output-format>  指定输出格式: text 或 json [default: text]
   - --pretty  以多行缩进格式输出 JSON [requires: --output-format=json] [conflicts: --compact]
@@ -705,9 +739,12 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 ### `directory-list-tool`
 
 - Summary: 列出指定目录的子项，用于最小可用的只读目录检索
-- Input Schema: `text`: path string; `json`: `input` [closed]
+- Input Schema: `text`: path string with optional recursive/depth/contains modifiers; `json`: `path`, `recursive`, `depth`, `contains` [closed]
 - Input JSON Fields:
-  - `input`: 待列举的目录路径 [type: `string`]
+  - `path`: 待列举的目录路径 [type: `string`]
+  - `recursive`: 是否递归列举子目录，缺省为 false [type: `boolean`] [optional] [nullable]
+  - `depth`: 递归列举的最大深度，缺省为不限制 [type: `integer`] [min: `1`] [optional] [nullable]
+  - `contains`: 仅返回路径中包含该子串的条目，缺省为不过滤 [type: `string`] [optional] [nullable]
 - Output Schema: `text`: directory entries; `json`: `result` [closed]
 - Output JSON Fields:
   - `result`: 目录列举结果内容 [type: `string`]
@@ -802,11 +839,14 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 ### `file-read-tool`
 
 - Summary: 读取指定文件内容，用于最小可用的只读文件检索
-- Input Schema: `text`: path string with optional line range; `json`: `path`, `startLine`, `endLine` [closed]
+- Input Schema: `text`: path string with optional line range(s); `json`: `path`, `startLine`, `endLine`, `ranges` [closed]
 - Input JSON Fields:
   - `path`: 待读取的文件路径 [type: `string`]
   - `startLine`: 起始行号，缺省时读取整个文件 [type: `integer`] [min: `1`] [optional] [nullable]
   - `endLine`: 结束行号，缺省时等于 startLine [type: `integer`] [min: `1`] [optional] [nullable]
+  - `ranges`: 多段行范围列表；提供时按给定顺序拼接输出且自动去重重复行 [type: `array`] [optional] [nullable] [closed]
+    - `startLine`: 行范围起始行号 [type: `integer`] [min: `1`]
+    - `endLine`: 行范围结束行号 [type: `integer`] [min: `1`]
 - Output Schema: `text`: file contents; `json`: `result` [closed]
 - Output JSON Fields:
   - `result`: 文件读取结果内容 [type: `string`]
@@ -834,6 +874,23 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
   - `code`: 稳定错误码 [type: `string`]
 - Failure Modes: `failed`
 - Permission Profile: `file-write`
+
+### `glob-tool`
+
+- Summary: 在指定目录树下按 glob 模式匹配文件，用于最小可用的文件发现
+- Input Schema: `text`: glob pattern or `pattern :: root`; `json`: `pattern`, `root` [closed]
+- Input JSON Fields:
+  - `pattern`: 待匹配的 glob 模式 [type: `string`]
+  - `root`: 搜索根路径，缺省为当前工作目录 [type: `string`] [optional] [nullable]
+- Output Schema: `text`: matched file paths; `json`: `result` [closed]
+- Output JSON Fields:
+  - `result`: 匹配结果文本，每行一条相对路径记录 [type: `string`]
+- Error Output Schema: `text`: glob search failed output; `json`: `error`, `code` [closed]
+- Error JSON Fields:
+  - `error`: glob 匹配失败摘要消息 [type: `string`]
+  - `code`: 稳定错误码 [type: `string`]
+- Failure Modes: `failed`
+- Permission Profile: `file-read`
 
 ### `grep-tool`
 
@@ -1109,6 +1166,33 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
   - `code`: 稳定错误码 [type: `string`]
 - Failure Modes: `failed`
 - Permission Profile: `shell`
+
+### `todo-write-tool`
+
+- Summary: 更新当前会话的结构化待办列表，用于最小可用的进度跟踪
+- Input Schema: `text`: todo list update request; `json`: `todos` [closed]
+- Input JSON Fields:
+  - `todos`: 更新后的待办列表 [type: `array`] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`] [allowed: `pending`, `in_progress`, `completed`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
+- Output Schema: `text`: todo write result; `json`: `result`, `oldTodos`, `newTodos` [closed]
+- Output JSON Fields:
+  - `result`: 待办列表更新摘要 [type: `string`]
+  - `oldTodos`: 更新前的待办列表 [type: `array`] [optional] [nullable] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
+  - `newTodos`: 更新后的待办列表 [type: `array`] [closed]
+    - `content`: 待办项内容 [type: `string`]
+    - `status`: 待办项状态 [type: `string`]
+    - `activeForm`: 待办项执行中的描述 [type: `string`]
+- Error Output Schema: `text`: todo write failed output; `json`: `error`, `code` [closed]
+- Error JSON Fields:
+  - `error`: 待办列表写入失败摘要消息 [type: `string`]
+  - `code`: 稳定错误码 [type: `string`]
+- Failure Modes: `failed`
+- Permission Profile: `default`
 
 
 <!-- END GENERATED COMMAND REFERENCE -->

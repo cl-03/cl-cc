@@ -43,14 +43,79 @@
          (progn
            (ensure-directories-exist nested-directory)
            (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
-             (write-string "alpha
-needle here" stream))
+             (write-string (format nil "alpha~%needle here") stream))
            (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
              (write-string "needle again" stream))
            (let ((result (cl-cc.tools:grep-tool (list :query "needle"
                                                       :root (uiop:native-namestring directory-path)))))
              (is (search "root.lisp:2:needle here" result))
-             (is (search "nested/result.txt:1:needle again" result))))
+             (is (search "nested/result.txt:1:needle again" result)))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file nested-file)
+        (delete-file nested-file))
+      (when (probe-file nested-directory)
+        (uiop:delete-directory-tree nested-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore))))
+
+(test grep-tool-prefers-command-runner-when-available
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "grep-tool-command-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "root.lisp" directory-path))
+         (nested-directory (merge-pathnames "nested/" directory-path))
+         (nested-file (merge-pathnames "nested/result.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist nested-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "alpha~%needle here") stream))
+           (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "needle again" stream))
+           (let ((cl-cc.tools::*grep-command-runner*
+                   (lambda (query root max-results)
+                     (declare (ignore query root max-results))
+                     (list :stdout (format nil "nested/result.txt:1:needle again~%root.lisp:2:needle here~%")
+                           :stderr nil
+                           :exit-code 0))))
+             (let ((result (cl-cc.tools:grep-tool
+                            (list :query "needle"
+                                  :root (uiop:native-namestring directory-path)))))
+               (is (string= result
+                            (format nil "nested/result.txt:1:needle again~%root.lisp:2:needle here"))))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file nested-file)
+        (delete-file nested-file))
+      (when (probe-file nested-directory)
+        (uiop:delete-directory-tree nested-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test grep-tool-falls-back-when-command-runner-is-unavailable
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "grep-tool-fallback-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "root.lisp" directory-path))
+         (nested-directory (merge-pathnames "nested/" directory-path))
+         (nested-file (merge-pathnames "nested/result.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist nested-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "alpha~%needle here") stream))
+           (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "needle again" stream))
+           (let ((cl-cc.tools::*grep-command-runner*
+                   (lambda (query root max-results)
+                     (declare (ignore query root max-results))
+                     nil)))
+             (let ((result (cl-cc.tools:grep-tool
+                            (list :query "needle"
+                                  :root (uiop:native-namestring directory-path)))))
+               (is (search "root.lisp:2:needle here" result))
+               (is (search "nested/result.txt:1:needle again" result)))))
       (when (probe-file root-file)
         (delete-file root-file))
       (when (probe-file nested-file)

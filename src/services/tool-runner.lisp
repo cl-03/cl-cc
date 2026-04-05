@@ -74,5 +74,6 @@
         (error (%permission-denied-error action)))
       (let ((tool-fn (cl-cc.tools:find-tool tool)))
         (if tool-fn
-            (funcall tool-fn input)
+            (let ((cl-cc.models:*active-session* (getf context :session)))
+              (funcall tool-fn input))
             (error (%tool-not-found-error tool)))))))

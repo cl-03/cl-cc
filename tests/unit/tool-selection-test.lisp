@@ -26,6 +26,8 @@
 (test select-tools-prefers-file-edit-tool-for-edit-intent
   (is (equal (cl-cc.services:select-tools "edit file notes.txt :: old :: new")
              '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+  (is (equal (cl-cc.services:select-tools "patch file notes.txt :: old :: new")
+             '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
   (is (equal (cl-cc.services:select-tools "replace all in file notes.txt :: old :: new")
              '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
   (is (equal (cl-cc.services:select-tools "请替换文件 docs/spec.txt :: before :: after")
@@ -36,6 +38,18 @@
              '("grep-tool" "file-read-tool" "echo-tool" "failing-tool")))
   (is (equal (cl-cc.services:select-tools "搜索代码 permission")
              '("grep-tool" "file-read-tool" "echo-tool" "failing-tool"))))
+
+(test select-tools-prefers-glob-tool-for-file-discovery-intent
+  (is (equal (cl-cc.services:select-tools "glob **/*.lisp")
+             '("glob-tool" "file-read-tool" "echo-tool" "failing-tool")))
+  (is (equal (cl-cc.services:select-tools "查找文件 src/**/*.lisp")
+             '("glob-tool" "file-read-tool" "echo-tool" "failing-tool"))))
+
+(test select-tools-prefers-todo-write-tool-for-todo-intent
+  (is (equal (cl-cc.services:select-tools "todo write Implement todo tool | in_progress | Implementing todo tool")
+             '("todo-write-tool" "echo-tool" "failing-tool")))
+  (is (equal (cl-cc.services:select-tools "更新待办列表 Implement todo tool | in_progress | Implementing todo tool")
+             '("todo-write-tool" "echo-tool" "failing-tool"))))
 
 (test select-tools-prefers-shell-tool-for-shell-intent
   (is (equal (cl-cc.services:select-tools "run shell git status")
@@ -112,6 +126,28 @@
     (is (string= (getf first-step :tool) "shell-task-list-tool"))
     (is (equal (getf first-step :input)
                '(:status :all :task-id-prefix nil :directory-contains nil :termination-reason nil)))))
+
+(test plan-session-execution-builds-glob-specific-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "glob src/**/*.lisp :: tests") )
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("glob-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "glob-tool"))
+    (is (equal (getf first-step :input)
+               '(:pattern "src/**/*.lisp" :root "tests")))))
+
+(test plan-session-execution-builds-todo-write-specific-inputs
+  (let* ((input "todo write Implement todo tool | in_progress | Implementing todo tool ;; Run tests | pending | Running tests")
+         (plan (cl-cc.services:plan-session-execution input))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("todo-write-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "todo-write-tool"))
+    (is (equal (getf first-step :input)
+               '(:todos ((:content "Implement todo tool" :status "in_progress" :active-form "Implementing todo tool")
+                         (:content "Run tests" :status "pending" :active-form "Running tests")))))))
 
 (test plan-session-execution-builds-shell-task-cleanup-inputs
   (let* ((plan (cl-cc.services:plan-session-execution "cleanup shell tasks :: completed"))
@@ -257,6 +293,26 @@
     (is (equal (getf first-step :input)
                '(:task-id "shell-task-123")))))
 
+(test plan-session-execution-builds-directory-list-recursive-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "list directory docs :: recursive :: depth=2"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("directory-list-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "directory-list-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "docs" :recursive t :depth 2)))))
+
+(test plan-session-execution-builds-directory-list-contains-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "list directory docs :: recursive :: contains=note"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("directory-list-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "directory-list-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "docs" :recursive t :depth nil :contains "note")))))
+
 (test select-tools-prefers-directory-list-tool-for-directory-intent
   (is (equal (cl-cc.services:select-tools "list directory docs")
              '("directory-list-tool" "file-read-tool" "echo-tool" "failing-tool")))
@@ -298,6 +354,26 @@
                '(:path "tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
     (is (equal (cdr (assoc "file-edit-tool" (getf plan :tool-inputs) :test #'string=))
                '(:path "tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))))
+
+(test plan-session-execution-builds-file-edit-occurrence-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "preview ignore case 2nd occurrence patch file tmp/demo.txt :: before :: after"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-edit-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "tmp/demo.txt" :old-text " before" :new-text " after" :preview t :occurrence 2 :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil)))))
+
+(test plan-session-execution-builds-file-edit-synonym-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "preview regex replace all case-insensitive patch file tmp/demo.txt :: token-[0-9]+ :: value"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-edit-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "tmp/demo.txt" :old-text " token-[0-9]+" :new-text " value" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :replace-all t)))))
 
 (test plan-session-execution-builds-file-edit-boundary-inputs
   (let* ((plan (cl-cc.services:plan-session-execution "preview regex left word boundary edit file tmp/demo.txt :: token-[0-9]+ :: value"))
@@ -465,6 +541,16 @@
     (is (equal (cdr (assoc "file-edit-tool" (getf plan :tool-inputs) :test #'string=))
                '(:path "tmp/demo.txt" :old-text " token-[0-9]+" :new-text " value" :preview t :occurrence nil :line-context 0 :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t)))))
 
+(test plan-session-execution-builds-file-edit-combinable-line-context-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "preview regex ignore case context 0 patch file tmp/demo.txt :: token-[0-9]+ :: value"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-edit-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "tmp/demo.txt" :old-text " token-[0-9]+" :new-text " value" :preview t :occurrence nil :line-context 0 :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t)))))
+
 (test plan-session-execution-builds-file-read-line-range-inputs
   (let* ((plan (cl-cc.services:plan-session-execution "read file src/core/session-loop.lisp :: 10-12"))
          (steps (getf plan :steps))
@@ -476,6 +562,24 @@
                '(:path "src/core/session-loop.lisp" :start-line 10 :end-line 12)))
     (is (equal (cdr (assoc "file-read-tool" (getf plan :tool-inputs) :test #'string=))
                '(:path "src/core/session-loop.lisp" :start-line 10 :end-line 12)))))
+
+(test plan-session-execution-builds-file-read-multi-range-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "read file src/core/session-loop.lisp :: 10-12,20,25-26"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-read-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "src/core/session-loop.lisp" :start-line nil :end-line nil
+                 :ranges ((:start-line 10 :end-line 12)
+                          (:start-line 20 :end-line 20)
+                          (:start-line 25 :end-line 26)))))
+    (is (equal (cdr (assoc "file-read-tool" (getf plan :tool-inputs) :test #'string=))
+               '(:path "src/core/session-loop.lisp" :start-line nil :end-line nil
+                 :ranges ((:start-line 10 :end-line 12)
+                          (:start-line 20 :end-line 20)
+                          (:start-line 25 :end-line 26)))))))
 
   (test plan-session-execution-builds-shell-specific-inputs
     (let* ((plan (cl-cc.services:plan-session-execution "run shell git status :: ."))

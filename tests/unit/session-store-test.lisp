@@ -47,13 +47,16 @@
                                  :history-index 2
                                  :context-summary '(:result "ok")
                                  :tasks tasks
+                   :todo-list '((:content "Run tests" :status "pending" :active-form "Running tests"))
                                  :permission-snapshot nil
                                  :status :active
                                  :version "0.1"))
          (save-ok (cl-cc.session:save-session session "tmp.session"))
          (loaded (cl-cc.session:load-session "tmp.session")))
     (is (not (null save-ok)))
-    (is (equal (cl-cc.models:session-tasks loaded) tasks))))
+          (is (equal (cl-cc.models:session-tasks loaded) tasks))
+          (is (equal (cl-cc.models:session-todo-list loaded)
+             '((:content "Run tests" :status "pending" :active-form "Running tests"))))))
 
 (test save-session-creates-parent-directories
   (let* ((directory (uiop:merge-pathnames* "cl-cc-session-store-test/nested/"

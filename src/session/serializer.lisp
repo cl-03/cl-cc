@@ -18,6 +18,12 @@
     ((listp value) value)
     (t (error (%invalid-session-error)))))
 
+(defun %normalized-serialized-session-todo-list (value)
+  (cond
+    ((null value) nil)
+    ((listp value) value)
+    (t (error (%invalid-session-error)))))
+
 (defun serialize-session (session)
   "将 session-state 对象序列化为可读 s-expression 字符串。"
   (with-standard-io-syntax
@@ -29,6 +35,7 @@
            :history-index (cl-cc.models:session-history-index session)
            :context-summary (cl-cc.models:session-context-summary session)
            :tasks (cl-cc.models:session-tasks session)
+           :todo-list (cl-cc.models:session-todo-list session)
            :permission-snapshot (cl-cc.models:session-permission-snapshot session)
            :status (cl-cc.models:session-status session)))))
 
@@ -49,6 +56,7 @@
                        :history-index (getf data :history-index)
                        :context-summary (getf data :context-summary)
                        :tasks (%normalized-serialized-session-tasks (getf data :tasks))
+                       :todo-list (%normalized-serialized-session-todo-list (getf data :todo-list))
                        :permission-snapshot (getf data :permission-snapshot)
                        :status (getf data :status)
                        :version version))
