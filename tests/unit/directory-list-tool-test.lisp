@@ -140,3 +140,31 @@
         (uiop:delete-directory-tree child-dir :validate t :if-does-not-exist :ignore))
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+;;; 新增：断言 entries 每项都含 type 字段且为 :file 或 :dir
+(test directory-list-tool-entries-have-type-field
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "directory-list-tool-type-test/"
+                                                 (uiop:temporary-directory))))
+         (file-a (merge-pathnames "a.txt" directory-path))
+         (dir-b (merge-pathnames "b/" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist dir-b)
+           (with-open-file (stream file-a :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "a" stream))
+           ;; 调用工具，假定新版实现返回 entries 字段
+           (let* ((result (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring directory-path))))
+                  (parsed (ignore-errors (jsown:parse result)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (listp entries))
+             (dolist (entry entries)
+               (is (and (jsown:keyp entry "type")
+                        (member (jsown:val entry "type") '(":file" ":dir") :test #'string=)))))
+           )
+      (when (probe-file file-a)
+        (delete-file file-a))
+      (when (probe-file dir-b)
+        (uiop:delete-directory-tree dir-b :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore))))

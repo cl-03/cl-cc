@@ -501,8 +501,9 @@
     (:failure-modes '(:failed))
     (:permission-profile :file-write))
 
+
 (define-tool "directory-list-tool" #'cl-cc.tools:directory-list-tool
-  (:summary "列出指定目录的子项，用于最小可用的只读目录检索")
+  (:summary "列出指定目录的子项，返回 entries（含 name 与 type 字段），type 为 :file 或 :dir。用于最小可用的只读目录检索")
   (:input-schema `(:text "path string with optional recursive/depth/contains modifiers"
                    :closed t
                    :json (,(schema-field "path" "待列举的目录路径" :type :string)
@@ -512,7 +513,11 @@
   (:output-schema `(:text "directory entries"
                     :closed t
             :json (,(schema-field "result" "目录列举结果内容" :source '(:raw-result-field :summary) :type :string)
-              ,(schema-field "entries" "按稳定排序返回的目录条目数组" :source '(:raw-result-field :entries) :type :array))))
+              ,(schema-field "entries" "按稳定排序返回的目录条目数组，每项含 name 与 type 字段，type 为 :file 或 :dir" :source '(:raw-result-field :entries) :type :array :closed t :collection t
+                 :fields (list
+                   (schema-field "name" "条目名称（文件或目录名，带相对路径）" :type :string)
+                   (schema-field "type" "条目类型，:file 或 :dir" :type :string :enum '(":file" ":dir"))
+                 )))))
   (:error-output-schema `(:text "directory listing failed output"
                           :closed t
                           :json (,(schema-field "error" "目录列举失败摘要消息" :source :error-message :type :string)

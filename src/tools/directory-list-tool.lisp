@@ -232,13 +232,14 @@
                         "(empty directory)")))
           (list "(empty directory)")))))
 
+
 (defun directory-list-tool (input)
-  "列出指定目录的子项，并在请求时支持递归与深度限制。"
+  "列出指定目录的子项，返回 JSON 字符串，entries 为对象数组，每项含 name 与 type 字段（:file/:dir）。"
   (let* ((request (%normalized-directory-list-input input))
          (path (%directory-list-request-path request))
          (recursive (%directory-list-request-recursive-p request))
-      (depth (%directory-list-request-depth request))
-      (contains (%directory-list-request-contains request)))
+         (depth (%directory-list-request-depth request))
+         (contains (%directory-list-request-contains request)))
     (unless (and path (> (length path) 0))
       (error (%directory-list-tool-error "路径为空")))
     (unless (probe-file path)
@@ -246,6 +247,53 @@
     (unless (uiop:directory-exists-p path)
       (error (%directory-list-tool-error (format nil "不是目录: ~A" path))))
     (handler-case
-        (format nil "~{~A~^~%~}" (%directory-entry-lines path :recursive recursive :depth depth :contains contains))
+        (let* ((entries (%directory-list-entries path :recursive recursive :depth depth :contains contains))
+               (result-obj (jsown:new-js)
+                           )
+               (entries-js (mapcar #'(lambda (entry)
+                                      (let ((obj (jsown:new-js)))
+                                        (jsown:extend-js obj
+                                          "name" (getf entry :name)
+                                          "type" (getf entry :type))))
+                                    entries)))
+          (jsown:extend-js result-obj
+            "result" (format nil "共 ~D 项" (length entries))
+            "entries" entries-js)
+          (jsown:to-json result-obj))
       (error ()
         (error (%directory-list-tool-error (format nil "无法列举目录: ~A" path)))))))
+
+;;; 新增：返回 entries (list of plist)，每项含 :name :type
+(defun %directory-list-entries (path &key recursive depth contains)
+  (labels ((collect-entries (directory prefix level)
+             (let* ((files (sort (copy-list (uiop:directory-files directory)) #'%directory-entry<))
+                    (directories (sort (copy-list (uiop:subdirectories directory)) #'%directory-entry<)))
+               (append (loop for file in files
+                             collect (list :name (format nil "~A~A" prefix (%directory-entry-name file))
+                                           :type ":file"))
+                       (loop for subdirectory in directories
+                             for directory-name = (%directory-entry-name subdirectory)
+                             for display-name = (format nil "~A~A" prefix directory-name)
+                             append (append (list (list :name display-name :type ":dir"))
+                                            (when (and recursive
+                                                       (or (null depth)
+                                                           (< level depth)))
+                                              (collect-entries subdirectory display-name (1+ level))))))))
+           (sorted-entries (entries)
+             (sort (copy-list entries) (lambda (a b) (string-lessp (getf a :name) (getf b :name))))))
+    (let* ((entries (if recursive
+                        (sorted-entries (collect-entries path "" 1))
+                        (sorted-entries (collect-entries path "" 0))))
+           (filtered-entries (if contains
+                                (remove-if-not (lambda (entry)
+                                                 (%directory-entry-matches-contains-p (getf entry :name) contains))
+                                               entries)
+                                entries)))
+      (if entries
+          (if filtered-entries
+              filtered-entries
+              (list (list :name (if contains
+                                    "(no matching entries)"
+                                    "(empty directory)")
+                         :type ":dir")))
+          (list (list :name "(empty directory)" :type ":dir"))))))
