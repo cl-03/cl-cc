@@ -1033,6 +1033,59 @@
       (when (probe-file path)
         (delete-file path)))))
 
+(test run-session-result-can-preview-search-replace-block-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-search-replace-block-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before target after" stream))
+           (let* ((input (format nil "preview patch file ~A~%<<<<<<< SEARCH~%target~%=======~%done~%>>>>>>> REPLACE" path))
+                  (result-object (cl-cc.services:run-session-result "preview-search-replace-block-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :old-text "target" :new-text "done" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil))))
+             (is (getf output :preview))
+             (is (= (getf output :match-count) 1))
+             (is (string= (getf output :matched-text) "target"))
+             (is (string= (getf output :replacement-text) "done"))
+             (is (string= (uiop:read-file-string path) "before target after"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test run-session-result-can-preview-multi-search-replace-block-edit-file-via-file-edit-tool
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "run-session-preview-multi-search-replace-block-edit-file-test.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before alpha tail" stream))
+           (let* ((input (format nil "preview patch file ~A~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE~%<<<<<<< SEARCH~%alpha~%=======~%beta~%>>>>>>> REPLACE" path))
+                  (result-object (cl-cc.services:run-session-result "preview-multi-search-replace-block-edit-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results)))
+                  (output (getf tool-record :output))
+                  (first-step (first (getf payload :execution-plan))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal first-step
+                        (list :tool "file-edit-tool"
+                              :input (list :path path :edits (list (list :old-text "before" :new-text "after")
+                                                                   (list :old-text "alpha" :new-text "beta"))
+                                           :preview t :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil))))
+             (is (getf output :preview))
+             (is (= (getf output :match-count) 2))
+             (is (search "顺序 2 块" (getf output :result)))
+             (is (string= (uiop:read-file-string path) "before alpha tail"))))
+      (when (probe-file path)
+        (delete-file path)))))
+
 (test run-session-result-can-preview-regex-multiline-edit-file-via-file-edit-tool
   (let ((path (uiop:native-namestring
                (uiop:merge-pathnames* "run-session-preview-regex-multiline-edit-file-test.txt"

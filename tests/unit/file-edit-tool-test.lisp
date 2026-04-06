@@ -12,8 +12,19 @@
              '(:path "C:/tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
   (is (equal (cl-cc.tools::%normalized-file-edit-input "patch file C:/tmp/demo.txt :: before :: after")
              '(:path "C:/tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
+  (is (equal (cl-cc.tools::%normalized-file-edit-input
+              (format nil "patch file C:/tmp/demo.txt~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE"))
+             '(:path "C:/tmp/demo.txt" :old-text "before" :new-text "after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
+  (is (equal (cl-cc.tools::%normalized-file-edit-input
+              (format nil "preview patch file C:/tmp/demo.txt~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE~%<<<<<<< SEARCH~%alpha~%=======~%beta~%>>>>>>> REPLACE"))
+             '(:path "C:/tmp/demo.txt" :edits ((:old-text "before" :new-text "after")
+                                               (:old-text "alpha" :new-text "beta"))
+               :preview t :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
   (is (equal (cl-cc.tools::%normalized-file-edit-input "preview edit file C:/tmp/demo.txt :: before :: after")
              '(:path "C:/tmp/demo.txt" :old-text " before" :new-text " after" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
+  (is (equal (cl-cc.tools::%normalized-file-edit-input
+              (format nil "preview regex ignore case patch file C:/tmp/demo.txt~%<<<<<<< SEARCH~%token-[0-9]+~%=======~%value~%>>>>>>> REPLACE"))
+             '(:path "C:/tmp/demo.txt" :old-text "token-[0-9]+" :new-text "value" :preview t :occurrence nil :line-context nil :ignore-case t :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t)))
   (is (equal (cl-cc.tools::%normalized-file-edit-input "update file C:/tmp/demo.txt :: before :: after")
              '(:path "C:/tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))
   (is (equal (cl-cc.tools::%normalized-file-edit-input "替换文件 C:/tmp/demo.txt :: 旧内容 :: 新内容")
@@ -203,6 +214,25 @@
                     (substitute #\/ #\\ path)
                     (substitute #\/ #\\ path)))))
            (is (string= (uiop:read-file-string path) "before preview after")))
+      (when (probe-file path)
+        (delete-file path)))))
+
+(test file-edit-tool-can-preview-sequential-search-replace-blocks
+  (let ((path (uiop:native-namestring
+               (uiop:merge-pathnames* "file-edit-tool-search-replace-blocks.txt"
+                                      (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before alpha tail" stream))
+           (let ((result (cl-cc.tools:file-edit-tool
+                          (format nil "preview patch file ~A~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE~%<<<<<<< SEARCH~%alpha~%=======~%beta~%>>>>>>> REPLACE" path))))
+             (is (search "顺序 2 块" (getf result :summary)))
+             (is (= (getf result :match-count) 2))
+             (is (string= (getf result :matched-text) "before"))
+             (is (string= (getf result :replacement-text) "after"))
+             (is (search "+after beta tail" (getf result :unified-diff-preview)))
+             (is (string= (uiop:read-file-string path) "before alpha tail"))))
       (when (probe-file path)
         (delete-file path)))))
 

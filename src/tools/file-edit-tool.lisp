@@ -27,15 +27,17 @@
 
 (defparameter +file-edit-basic-mode-specs+
   (list (list :prefixes (%file-edit-basic-prefixes
-                         '("preview regex edit file " "dry run regex edit file " "preview regex replace in file ")
+                         '("preview regex edit file " "dry run regex edit file " "preview regex replace in file "
+                           "preview regex replace text in file " "preview regex patch file " "preview regex update file ")
                          '("预览正则编辑文件" "试运行正则编辑文件" "预览正则替换文件"))
               :mode (%file-edit-mode :preview t :use-regex t))
         (list :prefixes (%file-edit-basic-prefixes
-                         '("regex edit file " "regex replace in file ")
+                         '("regex edit file " "regex replace in file " "regex replace text in file " "regex patch file " "regex update file ")
                          '("正则编辑文件" "正则替换文件"))
               :mode (%file-edit-mode :preview nil :use-regex t))
         (list :prefixes (%file-edit-basic-prefixes
-                         '("preview edit file " "dry run edit file " "preview replace in file ")
+                         '("preview edit file " "dry run edit file " "preview replace in file "
+                           "preview replace text in file " "preview patch file " "preview update file ")
                          '("预览编辑文件" "试运行编辑文件" "预览替换文件"))
               :mode (%file-edit-mode :preview t :use-regex nil))
         (list :prefixes (%file-edit-basic-prefixes
@@ -53,6 +55,18 @@
 (defparameter +file-edit-trim-characters+
   '(#\Space #\Tab #\Newline #\Return)
   "file-edit-tool 在解析自然语言输入时统一裁剪的空白字符集。")
+
+(defparameter +file-edit-search-block-start+
+  "<<<<<<< SEARCH"
+  "file-edit-tool 支持的 SEARCH/REPLACE 块起始标记。")
+
+(defparameter +file-edit-search-block-separator+
+  "======="
+  "file-edit-tool 支持的 SEARCH/REPLACE 块分隔标记。")
+
+(defparameter +file-edit-search-block-end+
+  ">>>>>>> REPLACE"
+  "file-edit-tool 支持的 SEARCH/REPLACE 块结束标记。")
 
 (defun %file-edit-line-context-prefix-patterns (english-prefixes chinese-prefixes)
   (append (loop for prefix in english-prefixes
@@ -214,6 +228,46 @@
                           :left-word-boundary left-word-boundary
                           :right-word-boundary right-word-boundary))))
 
+(defun %normalize-file-edit-sequential-request (path edits &key preview line-context ignore-case use-regex multiline dot-all whole-word left-word-boundary right-word-boundary)
+  (let ((normalized-path (and path (string-trim +file-edit-trim-characters+ (string path)))))
+    (when (and normalized-path
+               (> (length normalized-path) 0)
+               (listp edits)
+               (> (length edits) 0)
+               (%valid-file-edit-line-context-p line-context)
+               (%valid-file-edit-boolean-option-p ignore-case)
+               (%valid-file-edit-boolean-option-p use-regex)
+               (%valid-file-edit-boolean-option-p multiline)
+               (%valid-file-edit-boolean-option-p dot-all)
+               (%valid-file-edit-boolean-option-p whole-word)
+               (%valid-file-edit-boolean-option-p left-word-boundary)
+               (%valid-file-edit-boolean-option-p right-word-boundary))
+      (let ((normalized-edits
+              (loop for edit in edits
+                    for old-text = (getf edit :old-text)
+                    for new-text = (getf edit :new-text)
+                    when (and (stringp old-text)
+                              (stringp new-text)
+                              (> (length old-text) 0))
+                      collect (list :old-text old-text :new-text new-text)
+                    else
+                      do (return nil))))
+        (when normalized-edits
+          (append (list :path normalized-path
+                        :edits normalized-edits
+                        :preview (not (null preview))
+                        :line-context line-context
+                        :ignore-case (not (null ignore-case))
+                        :whole-word (not (null whole-word))
+                        :left-word-boundary (not (null left-word-boundary))
+                        :right-word-boundary (not (null right-word-boundary)))
+                  (when use-regex
+                    (list :use-regex t))
+                  (when multiline
+                    (list :multiline t))
+                  (when dot-all
+                    (list :dot-all t))))))))
+
 (defun %parse-file-edit-occurrence (text)
   (let ((trimmed (and text (string-trim +file-edit-trim-characters+ text))))
     (when (and trimmed
@@ -252,6 +306,81 @@
                                            :whole-word whole-word
                                            :left-word-boundary left-word-boundary
                                            :right-word-boundary right-word-boundary)))))))
+
+(defun %normalize-file-edit-block-line-endings (text)
+  (with-output-to-string (stream)
+    (loop with length = (length text)
+          for index from 0 below length
+          for character = (char text index)
+          do (cond
+               ((char= character #\Return)
+                (write-char #\Newline stream)
+                (when (and (< (1+ index) length)
+                           (char= (char text (1+ index)) #\Newline))
+                  (incf index)))
+               (t
+                (write-char character stream))))))
+
+(defun %parse-file-edit-search-replace-block (text &key preview occurrence line-context replace-all use-regex ignore-case multiline dot-all whole-word left-word-boundary right-word-boundary)
+  (let* ((normalized-text (%normalize-file-edit-block-line-endings text))
+         (first-newline (position #\Newline normalized-text)))
+    (when first-newline
+      (let* ((path (subseq normalized-text 0 first-newline))
+             (body (subseq normalized-text (1+ first-newline)))
+             (start-line (format nil "~A~%" +file-edit-search-block-start+))
+             (separator-line (format nil "~%~A~%" +file-edit-search-block-separator+))
+             (end-line (format nil "~%~A" +file-edit-search-block-end+)))
+        (labels ((parse-blocks (remaining edits)
+                   (when (uiop:string-prefix-p start-line remaining)
+                     (let* ((old-start (length start-line))
+                            (separator-position (search separator-line remaining :start2 old-start :test #'char=))
+                            (new-start (and separator-position
+                                            (+ separator-position (length separator-line))))
+                            (end-position (and new-start
+                                               (search end-line remaining :start2 new-start :test #'char=))))
+                       (when (and separator-position end-position)
+                         (let* ((edit (list :old-text (subseq remaining old-start separator-position)
+                                            :new-text (subseq remaining new-start end-position)))
+                                (after-block (subseq remaining (+ end-position (length end-line)))))
+                           (cond
+                             ((string= (string-trim +file-edit-trim-characters+ after-block) "")
+                              (nreverse (cons edit edits)))
+                             ((and (> (length after-block) 0)
+                                   (char= (char after-block 0) #\Newline))
+                              (parse-blocks (subseq after-block 1) (cons edit edits)))
+                             (t nil))))))))
+          (let ((parsed-edits (parse-blocks body '())))
+            (when parsed-edits
+              (if (= (length parsed-edits) 1)
+                  (%normalize-file-edit-request
+                   path
+                   (getf (first parsed-edits) :old-text)
+                   (getf (first parsed-edits) :new-text)
+                   :preview preview
+                   :occurrence occurrence
+                   :line-context line-context
+                   :replace-all replace-all
+                   :ignore-case ignore-case
+                   :use-regex use-regex
+                   :multiline multiline
+                   :dot-all dot-all
+                   :whole-word whole-word
+                   :left-word-boundary left-word-boundary
+                   :right-word-boundary right-word-boundary)
+                  (and (null occurrence)
+                       (null replace-all)
+                       (%normalize-file-edit-sequential-request
+                        path
+                        parsed-edits
+                        :preview preview
+                        :line-context line-context
+                        :ignore-case ignore-case
+                        :use-regex use-regex
+                        :multiline multiline
+                        :dot-all dot-all
+                        :whole-word whole-word
+                        :left-word-boundary left-word-boundary
+                        :right-word-boundary right-word-boundary))))))))))
 
 (defun %parse-file-edit-parameterized-prefix (text patterns)
   (loop for pattern in patterns
@@ -331,7 +460,7 @@
               (parse-english-prefix "context ")
             (if remainder
                 (values remainder line-context)
-                (parse-chinese-prefix)))))))
+            (parse-chinese-prefix)))))))
 
 (defun %parse-file-edit-combinable-occurrence (text)
   (labels ((parse-english-prefix (prefix)
@@ -460,18 +589,30 @@
 (defun %parse-prefixed-file-edit-text (text)
   (multiple-value-bind (stripped-text mode)
       (%parse-file-edit-natural-language-mode text)
-    (%parse-file-edit-text stripped-text
-                           :preview (getf mode :preview)
-                           :occurrence (getf mode :occurrence)
-                           :line-context (getf mode :line-context)
-                           :replace-all (getf mode :replace-all)
-                           :use-regex (getf mode :use-regex)
-                           :ignore-case (getf mode :ignore-case)
-                           :multiline (getf mode :multiline)
-                           :dot-all (getf mode :dot-all)
-                           :whole-word (getf mode :whole-word)
-                           :left-word-boundary (getf mode :left-word-boundary)
-                           :right-word-boundary (getf mode :right-word-boundary))))
+    (or (%parse-file-edit-search-replace-block stripped-text
+                                               :preview (getf mode :preview)
+                                               :occurrence (getf mode :occurrence)
+                                               :line-context (getf mode :line-context)
+                                               :replace-all (getf mode :replace-all)
+                                               :use-regex (getf mode :use-regex)
+                                               :ignore-case (getf mode :ignore-case)
+                                               :multiline (getf mode :multiline)
+                                               :dot-all (getf mode :dot-all)
+                                               :whole-word (getf mode :whole-word)
+                                               :left-word-boundary (getf mode :left-word-boundary)
+                                               :right-word-boundary (getf mode :right-word-boundary))
+        (%parse-file-edit-text stripped-text
+                               :preview (getf mode :preview)
+                               :occurrence (getf mode :occurrence)
+                               :line-context (getf mode :line-context)
+                               :replace-all (getf mode :replace-all)
+                               :use-regex (getf mode :use-regex)
+                               :ignore-case (getf mode :ignore-case)
+                               :multiline (getf mode :multiline)
+                               :dot-all (getf mode :dot-all)
+                               :whole-word (getf mode :whole-word)
+                               :left-word-boundary (getf mode :left-word-boundary)
+                               :right-word-boundary (getf mode :right-word-boundary)))))
 
 (defun %normalized-file-edit-input (input)
   (cond
@@ -493,6 +634,20 @@
                                    :whole-word (getf input :whole-word)
                                    :left-word-boundary (getf input :left-word-boundary)
                                    :right-word-boundary (getf input :right-word-boundary)))
+                    ((and (listp input)
+                        (getf input :path)
+                        (listp (getf input :edits)))
+                     (%normalize-file-edit-sequential-request (getf input :path)
+                                          (getf input :edits)
+                                          :preview (getf input :preview)
+                                          :line-context (getf input :line-context)
+                                          :ignore-case (getf input :ignore-case)
+                                          :use-regex (getf input :use-regex)
+                                          :multiline (getf input :multiline)
+                                          :dot-all (getf input :dot-all)
+                                          :whole-word (getf input :whole-word)
+                                          :left-word-boundary (getf input :left-word-boundary)
+                                          :right-word-boundary (getf input :right-word-boundary)))
     (t
     (let ((text (and input (string-trim +file-edit-trim-characters+ (string input)))))
        (cond
@@ -1086,7 +1241,63 @@
 (defun %file-edit-replacement-text (record)
   (getf record :replacement-text))
 
-(defun %file-edit-result-payload (path old-text new-text contents updated-contents replacement-records total-matches selected-occurrence &key preview line-context replace-all ignore-case use-regex multiline dot-all whole-word left-word-boundary right-word-boundary)
+(defun %file-edit-record-delta (record)
+  (- (length (%file-edit-replacement-text record))
+     (length (%file-edit-matched-text record))))
+
+(defun %file-edit-shift-record-updated-position (record delta)
+  (incf (getf record :updated-position) delta)
+  (incf (getf record :updated-end) delta)
+  record)
+
+(defun %file-edit-current-position-to-original-position (records position)
+  (- position
+     (loop for record in records
+           when (< (getf record :updated-position) position)
+             sum (%file-edit-record-delta record))))
+
+(defun %replace-sequential-file-edit-blocks (contents edits &key ignore-case use-regex multiline dot-all whole-word left-word-boundary right-word-boundary)
+  (let ((current-contents contents)
+        (records '())
+        (total-matches 0))
+    (dolist (edit edits)
+      (multiple-value-bind (next-contents step-records step-total-matches selected-occurrence)
+          (%replace-file-edit-occurrences current-contents
+                                          (getf edit :old-text)
+                                          (getf edit :new-text)
+                                          :occurrence nil
+                                          :replace-all nil
+                                          :ignore-case ignore-case
+                                          :use-regex use-regex
+                                          :multiline multiline
+                                          :dot-all dot-all
+                                          :whole-word whole-word
+                                          :left-word-boundary left-word-boundary
+                                          :right-word-boundary right-word-boundary)
+        (declare (ignore selected-occurrence))
+        (let* ((step-record (first step-records))
+               (current-start (getf step-record :original-position))
+               (current-end (getf step-record :original-end))
+               (updated-start (getf step-record :updated-position))
+               (delta (%file-edit-record-delta step-record))
+               (original-start (%file-edit-current-position-to-original-position records current-start))
+               (original-end (%file-edit-current-position-to-original-position records current-end))
+               (transformed-record (list :original-position original-start
+                                        :original-end original-end
+                                        :updated-position updated-start
+                                        :updated-end (getf step-record :updated-end)
+                                        :matched-text (%file-edit-matched-text step-record)
+                                        :replacement-text (%file-edit-replacement-text step-record)
+                                        :selected-occurrence 1)))
+          (dolist (record records)
+            (when (>= (getf record :updated-position) updated-start)
+              (%file-edit-shift-record-updated-position record delta)))
+          (setf records (append records (list transformed-record)))
+          (incf total-matches step-total-matches)
+          (setf current-contents next-contents))))
+            (values current-contents records total-matches nil)))
+
+(defun %file-edit-result-payload (path old-text new-text contents updated-contents replacement-records total-matches selected-occurrence &key preview line-context replace-all ignore-case use-regex multiline dot-all whole-word left-word-boundary right-word-boundary block-count)
   (let* ((primary-record (first replacement-records))
          (position (getf primary-record :original-position))
          (updated-position (getf primary-record :updated-position))
@@ -1103,9 +1314,15 @@
          (match-count (length replacement-records))
          (matched-text (%file-edit-matched-text primary-record))
          (replacement-text (%file-edit-replacement-text primary-record))
-         (summary (if preview
-                      (%file-edit-preview-message path old-text new-text selected-occurrence total-matches match-count replace-all)
-                      (%file-edit-success-message path selected-occurrence total-matches match-count replace-all))))
+         (summary (if block-count
+                (format nil "~A: ~A [顺序 ~D 块，替换 ~D 处]"
+                  (if preview "预览编辑文件" "编辑文件")
+                  path
+                  block-count
+                  match-count)
+                (if preview
+              (%file-edit-preview-message path old-text new-text selected-occurrence total-matches match-count replace-all)
+              (%file-edit-success-message path selected-occurrence total-matches match-count replace-all)))))
     (append (list :summary summary
       :path path
       :preview (not (null preview))
@@ -1136,6 +1353,7 @@
   "替换指定文件中的文本片段并返回稳定摘要。"
   (let* ((request (%normalized-file-edit-input input))
          (path (and request (getf request :path)))
+         (edits (and request (getf request :edits)))
          (old-text (and request (getf request :old-text)))
          (new-text (and request (getf request :new-text)))
          (preview (not (null (and request (getf request :preview)))))
@@ -1153,10 +1371,12 @@
       (error (%file-edit-tool-error "请求格式无效，期望 `edit file <path> :: <old-text> :: <new-text> [:: <occurrence>]`、`preview edit file <path> :: <old-text> :: <new-text> [:: <occurrence>]`、`regex edit file <path> :: <old-text> :: <new-text> [:: <occurrence>]` 或 `preview regex edit file <path> :: <old-text> :: <new-text> [:: <occurrence>]`")))
     (unless (and path (> (length path) 0))
       (error (%file-edit-tool-error "路径为空")))
-    (unless (> (length old-text) 0)
+    (unless (or edits (> (length old-text) 0))
       (error (%file-edit-tool-error "待替换内容为空")))
     (when (and replace-all occurrence)
       (error (%file-edit-tool-error "replaceAll 与 occurrence 不能同时指定")))
+    (when (and edits (or occurrence replace-all))
+      (error (%file-edit-tool-error "多块 SEARCH/REPLACE 当前不支持与 occurrence 或 replaceAll 组合")))
     (unless (probe-file path)
       (error (%file-edit-tool-error (format nil "文件不存在: ~A" path))))
     (handler-case
@@ -1167,19 +1387,32 @@
                (selected-occurrence nil)
                (result-payload nil))
           (multiple-value-setq (updated-contents replacement-records total-matches selected-occurrence)
-            (%replace-file-edit-occurrences contents old-text new-text
-                                            :occurrence occurrence
-                                            :replace-all replace-all
-                                            :ignore-case ignore-case
-                                            :use-regex use-regex
-                                            :multiline multiline
-                                            :dot-all dot-all
-                                            :whole-word whole-word
-                                            :left-word-boundary left-word-boundary
-                                            :right-word-boundary right-word-boundary))
+            (if edits
+                (%replace-sequential-file-edit-blocks contents edits
+                                                     :ignore-case ignore-case
+                                                     :use-regex use-regex
+                                                     :multiline multiline
+                                                     :dot-all dot-all
+                                                     :whole-word whole-word
+                                                     :left-word-boundary left-word-boundary
+                                                     :right-word-boundary right-word-boundary)
+                (%replace-file-edit-occurrences contents old-text new-text
+                                                :occurrence occurrence
+                                                :replace-all replace-all
+                                                :ignore-case ignore-case
+                                                :use-regex use-regex
+                                                :multiline multiline
+                                                :dot-all dot-all
+                                                :whole-word whole-word
+                                                :left-word-boundary left-word-boundary
+                                                :right-word-boundary right-word-boundary)))
           (setf result-payload (%file-edit-result-payload path
-                                                          old-text
-                                                          new-text
+                                                          (if edits
+                                                              (getf (first edits) :old-text)
+                                                              old-text)
+                                                          (if edits
+                                                              (getf (first edits) :new-text)
+                                                              new-text)
                                                           contents
                                                           updated-contents
                                                           replacement-records
@@ -1194,7 +1427,8 @@
                                                           :dot-all dot-all
                                                           :whole-word whole-word
                                                           :left-word-boundary left-word-boundary
-                                                          :right-word-boundary right-word-boundary))
+                                                          :right-word-boundary right-word-boundary
+                                                          :block-count (and edits (length edits))))
           (unless preview
             (with-open-file (stream path
                                     :direction :output

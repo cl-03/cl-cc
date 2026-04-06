@@ -355,6 +355,30 @@
     (is (equal (cdr (assoc "file-edit-tool" (getf plan :tool-inputs) :test #'string=))
                '(:path "tmp/demo.txt" :old-text " before" :new-text " after" :preview nil :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))))
 
+(test plan-session-execution-builds-file-edit-search-replace-block-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution
+                (format nil "preview patch file tmp/demo.txt~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE")))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-edit-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "tmp/demo.txt" :old-text "before" :new-text "after" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))))
+
+(test plan-session-execution-builds-file-edit-multi-search-replace-block-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution
+                (format nil "preview patch file tmp/demo.txt~%<<<<<<< SEARCH~%before~%=======~%after~%>>>>>>> REPLACE~%<<<<<<< SEARCH~%alpha~%=======~%beta~%>>>>>>> REPLACE")))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("file-edit-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "file-edit-tool"))
+    (is (equal (getf first-step :input)
+               '(:path "tmp/demo.txt" :edits ((:old-text "before" :new-text "after")
+                                              (:old-text "alpha" :new-text "beta"))
+                 :preview t :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil)))))
+
 (test plan-session-execution-builds-file-edit-occurrence-inputs
   (let* ((plan (cl-cc.services:plan-session-execution "preview ignore case 2nd occurrence patch file tmp/demo.txt :: before :: after"))
          (steps (getf plan :steps))
