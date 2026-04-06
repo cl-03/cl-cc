@@ -17,6 +17,10 @@
   '("append file " "append to file " "追加写入文件" "追加文件")
   "允许 file-write-tool 以追加模式消费的自然语言前缀。")
 
+(defparameter +protected-file-write-directories+
+  '(".git")
+  "禁止 file-write-tool 写入的受保护目录段。")
+
 (defun %split-once (text delimiter)
   (let ((position (search delimiter text :test #'char-equal)))
     (when position
@@ -79,6 +83,14 @@
       (format nil "追加写入文件: ~A" path)
       (format nil "写入文件: ~A" path)))
 
+(defun %protected-file-write-path-p (path)
+  (let ((components (cl-ppcre:split "[/\\\\]+" (or path ""))))
+    (loop for component in components
+          thereis (and (> (length component) 0)
+                       (not (string= component "."))
+                       (member component +protected-file-write-directories+
+                               :test #'string-equal)))))
+
 (defun file-write-tool (input)
   "写入指定文件并返回稳定摘要。"
   (let* ((request (%normalized-file-write-input input))
@@ -91,6 +103,8 @@
       (error (%file-write-tool-error "路径为空")))
     (unless content
       (error (%file-write-tool-error "内容为空")))
+    (when (%protected-file-write-path-p path)
+      (error (%file-write-tool-error (format nil "禁止写入受保护目录(.git): ~A" path))))
     (handler-case
         (progn
           (ensure-directories-exist path)
@@ -100,5 +114,7 @@
                                   :if-does-not-exist :create)
             (write-string content stream))
           (%file-write-success-message path mode))
+      (cl-cc.lib:cl-cc-error (condition)
+        (error condition))
       (error ()
         (error (%file-write-tool-error (format nil "无法写入文件: ~A" path)))))))
