@@ -681,6 +681,46 @@
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
 
+(test grep-tool-searches-directory-content-with-structured-path-filters
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "grep-tool-filtered-integration/"
+                                                 (uiop:temporary-directory))))
+         (src-directory (merge-pathnames "src/" directory-path))
+         (skip-directory (merge-pathnames "skip/" directory-path))
+         (src-file (merge-pathnames "src/main.lisp" directory-path))
+         (skip-file (merge-pathnames "skip/ignored.lisp" directory-path))
+         (notes-file (merge-pathnames "notes.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist src-directory)
+           (ensure-directories-exist skip-directory)
+           (with-open-file (stream src-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "needle in src" stream))
+           (with-open-file (stream skip-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "needle in skip" stream))
+           (with-open-file (stream notes-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "needle in notes" stream))
+           (let ((request (list :query "needle"
+                                :root (uiop:native-namestring directory-path)
+                                :include-pattern "**/*.lisp"
+                                :exclude-pattern "skip/**")))
+             (is (string= (cl-cc.tools:grep-tool request)
+                          "src/main.lisp:1:needle in src"))
+             (is (string= (funcall (cl-cc.tools:find-tool "grep-tool") request)
+                          "src/main.lisp:1:needle in src"))))
+      (when (probe-file src-file)
+        (delete-file src-file))
+      (when (probe-file skip-file)
+        (delete-file skip-file))
+      (when (probe-file notes-file)
+        (delete-file notes-file))
+      (when (probe-file src-directory)
+        (uiop:delete-directory-tree src-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file skip-directory)
+        (uiop:delete-directory-tree skip-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
 (test directory-list-tool-reads-directory-content
   (let* ((directory-path (uiop:ensure-directory-pathname
                           (uiop:merge-pathnames* "directory-list-tool-integration/"

@@ -122,6 +122,8 @@
                    :json (,(schema-field "query" "待搜索的单个文本关键词" :type :string)
                           ,(schema-field "queries" "待搜索的多个文本关键词列表，任一命中即返回该行" :type :array :required nil :nullable t :collection t
                                          :fields (list (schema-field "query" "待搜索的文本关键词" :type :string)))
+                          ,(schema-field "includePattern" "仅返回路径匹配该 glob 模式的命中记录" :type :string :required nil :nullable t)
+                          ,(schema-field "excludePattern" "排除路径匹配该 glob 模式的命中记录" :type :string :required nil :nullable t)
                           ,(schema-field "root" "搜索根路径，缺省为当前工作目录" :type :string :required nil :nullable t))))
   (:output-schema `(:text "matched lines"
                     :closed t

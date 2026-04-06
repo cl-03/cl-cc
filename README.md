@@ -896,11 +896,13 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 ### `grep-tool`
 
 - Summary: 在指定目录或单个文件内搜索文本，用于最小可用的代码检索
-- Input Schema: `text`: search query, `query-1 || query-2`, or `query :: root`; `json`: `query`, `queries`, `root` [closed]
+- Input Schema: `text`: search query, `query-1 || query-2`, or `query :: root`; `json`: `query`, `queries`, `includePattern`, `excludePattern`, `root` [closed]
 - Input JSON Fields:
   - `query`: 待搜索的单个文本关键词 [type: `string`]
   - `queries`: 待搜索的多个文本关键词列表，任一命中即返回该行 [type: `array`] [optional] [nullable]
     - `query`: 待搜索的文本关键词 [type: `string`]
+  - `includePattern`: 仅返回路径匹配该 glob 模式的命中记录 [type: `string`] [optional] [nullable]
+  - `excludePattern`: 排除路径匹配该 glob 模式的命中记录 [type: `string`] [optional] [nullable]
   - `root`: 搜索根路径，缺省为当前工作目录 [type: `string`] [optional] [nullable]
 - Output Schema: `text`: matched lines; `json`: `result` [closed]
 - Output JSON Fields:

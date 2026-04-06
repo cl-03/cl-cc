@@ -19,11 +19,15 @@
   (cl-cc.lib:make-cl-cc-error :grep-search-failed
                               (%grep-tool-message detail)))
 
-(defun %grep-request (queries &key root)
+(defun %grep-request (queries &key root include-pattern exclude-pattern)
   (append (list :queries queries
                 :query (first queries))
           (when root
-            (list :root root))))
+            (list :root root))
+          (when include-pattern
+            (list :include-pattern include-pattern))
+          (when exclude-pattern
+            (list :exclude-pattern exclude-pattern))))
 
 (defun %normalize-grep-string (value)
   (let ((text (and value (string-trim '(#\Space #\Tab #\Newline #\Return) (string value)))))
@@ -40,14 +44,21 @@
               when normalized-segment
                 collect normalized-segment)))))
 
-(defun %normalize-grep-request (query &key root)
+(defun %normalize-grep-request (query &key root include-pattern exclude-pattern)
   (let ((normalized-queries (%split-grep-queries query))
-        (normalized-root (%normalize-grep-string root)))
+        (normalized-root (%normalize-grep-string root))
+        (normalized-include-pattern (%normalize-grep-string include-pattern))
+        (normalized-exclude-pattern (%normalize-grep-string exclude-pattern)))
     (when normalized-queries
-      (%grep-request normalized-queries :root normalized-root))))
+      (%grep-request normalized-queries
+                     :root normalized-root
+                     :include-pattern normalized-include-pattern
+                     :exclude-pattern normalized-exclude-pattern))))
 
-(defun %normalize-grep-queries-request (queries &key root)
-  (let ((normalized-root (%normalize-grep-string root)))
+(defun %normalize-grep-queries-request (queries &key root include-pattern exclude-pattern)
+  (let ((normalized-root (%normalize-grep-string root))
+        (normalized-include-pattern (%normalize-grep-string include-pattern))
+        (normalized-exclude-pattern (%normalize-grep-string exclude-pattern)))
     (when (and (listp queries)
                (> (length queries) 0))
       (let ((normalized-queries (loop for query in queries
@@ -57,7 +68,10 @@
                                       else
                                         do (return nil))))
         (when normalized-queries
-          (%grep-request normalized-queries :root normalized-root))))))
+          (%grep-request normalized-queries
+                         :root normalized-root
+                         :include-pattern normalized-include-pattern
+                         :exclude-pattern normalized-exclude-pattern))))))
 
 (defun %parse-grep-text (text)
   (multiple-value-bind (query root foundp)
@@ -75,11 +89,19 @@
           (getf input :queries)
           (listp (getf input :queries)))
      (%normalize-grep-queries-request (getf input :queries)
-                                      :root (getf input :root)))
+                  :root (getf input :root)
+                  :include-pattern (or (getf input :include-pattern)
+                           (getf input :includePattern))
+                  :exclude-pattern (or (getf input :exclude-pattern)
+                           (getf input :excludePattern))))
     ((and (listp input)
           (getf input :query))
      (%normalize-grep-request (getf input :query)
-                              :root (getf input :root)))
+              :root (getf input :root)
+              :include-pattern (or (getf input :include-pattern)
+                       (getf input :includePattern))
+              :exclude-pattern (or (getf input :exclude-pattern)
+                       (getf input :excludePattern))))
     (t
      (let ((text (%normalize-grep-string input)))
        (cond
@@ -179,7 +201,51 @@
        (subseq portable 2))
       (t portable))))
 
-(defun %grep-command-match-line (line root)
+(defun %grep-pattern-regex (pattern)
+  (let ((portable-pattern (substitute #\/ #\\ pattern)))
+    (with-output-to-string (stream)
+      (write-char #\^ stream)
+      (loop with length = (length portable-pattern)
+            for index = 0 then next-index
+            while (< index length)
+            for character = (char portable-pattern index)
+            for next-index = (1+ index)
+            do (cond
+                 ((char= character #\*)
+                  (cond
+                    ((and (< next-index length)
+                          (char= (char portable-pattern next-index) #\*))
+                     (let ((after-next (1+ next-index)))
+                       (cond
+                         ((and (< after-next length)
+                               (char= (char portable-pattern after-next) #\/))
+                          (write-string "(?:.*/)?" stream)
+                          (setf next-index (+ index 3)))
+                         (t
+                          (write-string ".*" stream)
+                          (setf next-index (+ index 2))))))
+                    (t
+                     (write-string "[^/]*" stream))))
+                 ((char= character #\?)
+                  (write-string "[^/]" stream))
+                 ((find character ".+()[]{}^$|\\" :test #'char=)
+                  (write-char #\\ stream)
+                  (write-char character stream))
+                 (t
+                  (write-char character stream))))
+      (write-char #\$ stream))))
+
+(defun %grep-pattern-matches-p (pattern relative-path)
+  (let ((scanner (cl-ppcre:create-scanner (%grep-pattern-regex pattern))))
+    (cl-ppcre:scan scanner (substitute #\/ #\\ relative-path))))
+
+(defun %grep-path-allowed-p (relative-path include-pattern exclude-pattern)
+  (and (or (null include-pattern)
+           (%grep-pattern-matches-p include-pattern relative-path))
+       (or (null exclude-pattern)
+           (not (%grep-pattern-matches-p exclude-pattern relative-path)))))
+
+(defun %grep-command-match-line (line root &key include-pattern exclude-pattern)
   (multiple-value-bind (path remainder path-found-p)
       (%split-once line ":")
     (when (and path-found-p remainder)
@@ -188,17 +254,20 @@
         (when (and line-found-p
                    line-number
                    (> (length line-number) 0))
-          (let* ((relative-path (%normalize-grep-command-path path))
-                 (absolute-path (merge-pathnames relative-path (%normalized-search-root root))))
-            (format nil "~A:~A:~A"
-                    (%relative-match-path absolute-path root)
-                    line-number
-                    text)))))))
+          (let ((relative-path (%normalize-grep-command-path path)))
+            (when (%grep-path-allowed-p relative-path include-pattern exclude-pattern)
+              (let ((absolute-path (merge-pathnames relative-path (%normalized-search-root root))))
+                (format nil "~A:~A:~A"
+                        (%relative-match-path absolute-path root)
+                        line-number
+                        text)))))))))
 
-(defun %grep-command-result-lines (stdout root)
+(defun %grep-command-result-lines (stdout root &key include-pattern exclude-pattern)
   (sort (remove nil
                 (mapcar (lambda (line)
-                          (%grep-command-match-line line root))
+                          (%grep-command-match-line line root
+                                                    :include-pattern include-pattern
+                                                    :exclude-pattern exclude-pattern))
                         (%normalized-file-lines (or stdout ""))))
         #'string<))
 
@@ -263,12 +332,15 @@
     (error ()
       nil)))
 
-(defun %grep-tool-result-lines (queries root)
+(defun %grep-tool-result-lines (queries root &key include-pattern exclude-pattern)
   (let* ((command-result (and *grep-command-runner*
                               (funcall *grep-command-runner* queries root +grep-tool-max-results+)))
          (command-exit-code (and command-result (getf command-result :exit-code))))
     (when (member command-exit-code '(0 1))
-      (let* ((command-matches (%grep-command-result-lines (getf command-result :stdout) root))
+      (let* ((command-matches (%grep-command-result-lines (getf command-result :stdout)
+                                                          root
+                                                          :include-pattern include-pattern
+                                                          :exclude-pattern exclude-pattern))
              (truncated-p (> (length command-matches) +grep-tool-max-results+)))
         (return-from %grep-tool-result-lines
           (values (if truncated-p
@@ -279,10 +351,12 @@
           (truncated-p nil)
           (resolved-root (%normalized-search-root root)))
       (dolist (file (%search-target-files resolved-root))
-        (dolist (line (%file-match-lines file queries resolved-root))
-          (if (< (length matches) +grep-tool-max-results+)
-              (push line matches)
-              (setf truncated-p t))))
+        (let ((relative-path (%relative-match-path file resolved-root)))
+          (when (%grep-path-allowed-p relative-path include-pattern exclude-pattern)
+            (dolist (line (%file-match-lines file queries resolved-root))
+              (if (< (length matches) +grep-tool-max-results+)
+                  (push line matches)
+                  (setf truncated-p t))))))
       (values (nreverse matches) truncated-p))))
 
 (defun %grep-tool-render-result (matches truncated-p)
@@ -299,6 +373,8 @@
   "在目录树或单个文件中搜索文本，并返回稳定的逐行结果。"
   (let* ((request (%normalized-grep-input input))
          (queries (and request (getf request :queries)))
+      (include-pattern (and request (getf request :include-pattern)))
+      (exclude-pattern (and request (getf request :exclude-pattern)))
          (root (and request (getf request :root)))
          (resolved-root (%normalized-search-root root)))
     (unless request
@@ -309,7 +385,9 @@
       (error (%grep-tool-error (format nil "搜索根路径不存在: ~A" (%search-root-display root)))))
     (handler-case
         (multiple-value-bind (matches truncated-p)
-            (%grep-tool-result-lines queries root)
+            (%grep-tool-result-lines queries root
+                                     :include-pattern include-pattern
+                                     :exclude-pattern exclude-pattern)
           (%grep-tool-render-result matches truncated-p))
       (error ()
         (error (%grep-tool-error (format nil "无法搜索路径: ~A" (%search-root-display root))))))))
