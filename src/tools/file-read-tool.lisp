@@ -68,25 +68,32 @@
                        collect normalized-range
                      else
                        do (return nil))))
-           (file-read-request (path &key start-line end-line ranges)
+               (file-read-request (path &key start-line end-line ranges context-lines)
              (let ((normalized-path (trim-text path))
                    (single-range (and start-line
                                       (line-range-request start-line :end-line end-line)))
-                   (multiple-ranges (normalized-range-list ranges)))
+               (multiple-ranges (normalized-range-list ranges))
+               (normalized-context-lines (and context-lines
+                          (positive-integer-or-nil context-lines))))
                (when (and normalized-path
                           (> (length normalized-path) 0)
                           (or (null start-line) single-range)
-                          (or (null ranges) multiple-ranges))
+                  (or (null ranges) multiple-ranges)
+                  (or (null context-lines) normalized-context-lines))
                  (let ((all-ranges (append (and single-range (list single-range)) multiple-ranges)))
                    (if (and all-ranges (> (length all-ranges) 1))
-                       (list :path normalized-path
-                             :start-line nil
-                             :end-line nil
-                             :ranges all-ranges)
+                   (append (list :path normalized-path
+                     :start-line nil
+                     :end-line nil
+                     :ranges all-ranges)
+                   (when normalized-context-lines
+                     (list :context-lines normalized-context-lines)))
                        (let ((range-request (first all-ranges)))
-                         (list :path normalized-path
-                               :start-line (and range-request (getf range-request :start-line))
-                       :end-line (and range-request (getf range-request :end-line)))))))))
+                 (append (list :path normalized-path
+                       :start-line (and range-request (getf range-request :start-line))
+                       :end-line (and range-request (getf range-request :end-line)))
+                     (when normalized-context-lines
+                       (list :context-lines normalized-context-lines)))))))))
            (parse-line-range (text)
              (multiple-value-bind (start end foundp)
                  (cl-cc.tools::%split-once text +file-read-range-separator+)
@@ -160,6 +167,8 @@
        (file-read-request (getf input :path)
                           :start-line (getf input :start-line)
                           :end-line (getf input :end-line)
+              :context-lines (or (getf input :context-lines)
+                     (getf input :contextLines))
                           :ranges (or (getf input :ranges)
                                       (getf input :line-ranges)
                                       (getf input :lineRanges))))
@@ -198,18 +207,52 @@
                                   line-number
                                   (nth (1- line-number) lines))))))
 
-(defun %file-read-multi-range-contents (contents ranges)
+(defun %validate-file-read-range-start-line (total-lines start-line)
+  (when (= total-lines 0)
+    (error (%file-read-tool-error "请求的起始行超出文件范围: 1")))
+  (when (> start-line total-lines)
+    (error (%file-read-tool-error (format nil "请求的起始行超出文件范围: ~D" start-line)))))
+
+(defun %expanded-file-read-range (range total-lines context-lines)
+  (list :start-line (max 1 (- (getf range :start-line) context-lines))
+        :end-line (min total-lines (+ (getf range :end-line) context-lines))))
+
+(defun %merge-expanded-file-read-ranges (ranges total-lines context-lines)
+  (let ((merged-ranges '()))
+    (dolist (expanded-range (sort (loop for range in ranges
+                                        collect (%expanded-file-read-range range total-lines context-lines))
+                                  #'<
+                                  :key (lambda (range)
+                                         (getf range :start-line))))
+      (let ((previous-range (first merged-ranges)))
+        (cond
+          ((null previous-range)
+           (push expanded-range merged-ranges))
+          ((<= (getf expanded-range :start-line)
+               (1+ (getf previous-range :end-line)))
+           (setf (getf previous-range :start-line)
+                 (min (getf previous-range :start-line)
+                      (getf expanded-range :start-line))
+                 (getf previous-range :end-line)
+                 (max (getf previous-range :end-line)
+                      (getf expanded-range :end-line))))
+          (t
+           (push expanded-range merged-ranges)))))
+    (nreverse merged-ranges)))
+
+(defun %file-read-multi-range-contents (contents ranges &key context-lines)
   (let* ((lines (uiop:split-string (%normalized-file-read-lines contents) :separator '(#\Newline)))
          (total-lines (length lines))
+         (effective-ranges (if context-lines
+                               (%merge-expanded-file-read-ranges ranges total-lines context-lines)
+                               ranges))
          (emitted-lines '())
          (seen-line-numbers (make-hash-table :test #'eql)))
-    (when (= total-lines 0)
-      (error (%file-read-tool-error "请求的起始行超出文件范围: 1")))
     (dolist (range ranges)
+      (%validate-file-read-range-start-line total-lines (getf range :start-line)))
+    (dolist (range effective-ranges)
       (let ((start-line (getf range :start-line))
             (end-line (getf range :end-line)))
-        (when (> start-line total-lines)
-          (error (%file-read-tool-error (format nil "请求的起始行超出文件范围: ~D" start-line))))
         (loop for line-number from start-line to (min end-line total-lines)
               unless (gethash line-number seen-line-numbers)
                 do (setf (gethash line-number seen-line-numbers) t)
@@ -225,6 +268,7 @@
          (path (and request (if (listp request) (getf request :path) request)))
          (start-line (and (listp request) (getf request :start-line)))
          (end-line (and (listp request) (getf request :end-line)))
+      (context-lines (and (listp request) (getf request :context-lines)))
          (ranges (and (listp request) (getf request :ranges))))
     (unless request
    (error (%file-read-tool-error
@@ -242,9 +286,18 @@
     (handler-case
         (let ((contents (uiop:read-file-string path)))
           (if ranges
-              (%file-read-multi-range-contents contents ranges)
+          (%file-read-multi-range-contents contents ranges :context-lines context-lines)
               (if start-line
-              (%file-read-line-contents contents start-line end-line)
+            (progn
+            (%validate-file-read-range-start-line (length (uiop:split-string (%normalized-file-read-lines contents) :separator '(#\Newline)))
+                                start-line)
+            (%file-read-line-contents contents
+                          (if context-lines
+                            (max 1 (- start-line context-lines))
+                            start-line)
+                          (if context-lines
+                            (+ end-line context-lines)
+                            end-line)))
                   contents)))
       (cl-cc.lib:cl-cc-error (condition)
         (error condition))

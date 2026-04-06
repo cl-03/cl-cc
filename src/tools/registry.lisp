@@ -101,6 +101,7 @@
                    :json (,(schema-field "path" "待读取的文件路径" :type :string)
                           ,(schema-field "startLine" "起始行号，缺省时读取整个文件" :type :integer :minimum 1 :required nil :nullable t)
                           ,(schema-field "endLine" "结束行号，缺省时等于 startLine" :type :integer :minimum 1 :required nil :nullable t)
+                          ,(schema-field "contextLines" "为所选行范围额外扩展的上下文行数；提供时会对扩展后重叠或相邻的 ranges 做稳定合并" :type :integer :minimum 1 :required nil :nullable t)
                           ,(schema-field "ranges" "多段行范围列表；提供时按给定顺序拼接输出且自动去重重复行" :type :array :required nil :nullable t :collection t :closed t
                                          :fields (list (schema-field "startLine" "行范围起始行号" :type :integer :minimum 1)
                                                        (schema-field "endLine" "行范围结束行号" :type :integer :minimum 1))))))

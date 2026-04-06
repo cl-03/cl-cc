@@ -839,11 +839,12 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
 ### `file-read-tool`
 
 - Summary: 读取指定文件内容，用于最小可用的只读文件检索
-- Input Schema: `text`: path string with optional line range(s); `json`: `path`, `startLine`, `endLine`, `ranges` [closed]
+- Input Schema: `text`: path string with optional line range(s); `json`: `path`, `startLine`, `endLine`, `contextLines`, `ranges` [closed]
 - Input JSON Fields:
   - `path`: 待读取的文件路径 [type: `string`]
   - `startLine`: 起始行号，缺省时读取整个文件 [type: `integer`] [min: `1`] [optional] [nullable]
   - `endLine`: 结束行号，缺省时等于 startLine [type: `integer`] [min: `1`] [optional] [nullable]
+  - `contextLines`: 为所选行范围额外扩展的上下文行数；提供时会对扩展后重叠或相邻的 ranges 做稳定合并 [type: `integer`] [min: `1`] [optional] [nullable]
   - `ranges`: 多段行范围列表；提供时按给定顺序拼接输出且自动去重重复行 [type: `array`] [optional] [nullable] [closed]
     - `startLine`: 行范围起始行号 [type: `integer`] [min: `1`]
     - `endLine`: 行范围结束行号 [type: `integer`] [min: `1`]
