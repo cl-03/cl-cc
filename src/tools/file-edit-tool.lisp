@@ -56,6 +56,10 @@
   '(#\Space #\Tab #\Newline #\Return)
   "file-edit-tool 在解析自然语言输入时统一裁剪的空白字符集。")
 
+(defparameter +protected-file-edit-directories+
+  '(".git")
+  "禁止 file-edit-tool 非预览写入的受保护目录段。")
+
 (defparameter +file-edit-search-block-start+
   "<<<<<<< SEARCH"
   "file-edit-tool 支持的 SEARCH/REPLACE 块起始标记。")
@@ -1349,6 +1353,14 @@
       :unified-diff-preview (%file-edit-unified-diff-preview path contents updated-contents replacement-records :line-context effective-line-context)
       :write-applied (not (null (not preview)))))))
 
+(defun %protected-file-edit-path-p (path)
+  (let ((components (cl-ppcre:split "[/\\\\]+" (or path ""))))
+    (loop for component in components
+          thereis (and (> (length component) 0)
+                       (not (string= component "."))
+                       (member component +protected-file-edit-directories+
+                               :test #'string-equal)))))
+
 (defun file-edit-tool (input)
   "替换指定文件中的文本片段并返回稳定摘要。"
   (let* ((request (%normalized-file-edit-input input))
@@ -1377,6 +1389,9 @@
       (error (%file-edit-tool-error "replaceAll 与 occurrence 不能同时指定")))
     (when (and edits (or occurrence replace-all))
       (error (%file-edit-tool-error "多块 SEARCH/REPLACE 当前不支持与 occurrence 或 replaceAll 组合")))
+    (when (and (not preview)
+               (%protected-file-edit-path-p path))
+      (error (%file-edit-tool-error (format nil "禁止编辑受保护目录(.git): ~A" path))))
     (unless (probe-file path)
       (error (%file-edit-tool-error (format nil "文件不存在: ~A" path))))
     (handler-case

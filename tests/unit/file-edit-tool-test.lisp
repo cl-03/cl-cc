@@ -127,6 +127,14 @@
              '(:path "C:/tmp/demo.txt" :old-text " b.*e" :new-text " after" :preview t :occurrence nil :line-context nil :ignore-case nil :whole-word nil :left-word-boundary nil :right-word-boundary nil :use-regex t :replace-all t)))
   (is (null (cl-cc.tools::%normalized-file-edit-input "   "))))
 
+(test protected-file-edit-path-p-matches-repository-metadata-directories-only
+  (is (cl-cc.tools::%protected-file-edit-path-p ".git/config"))
+  (is (cl-cc.tools::%protected-file-edit-path-p "repo/.git/hooks/pre-commit"))
+  (is (cl-cc.tools::%protected-file-edit-path-p "repo\\.git\\config"))
+  (is (not (cl-cc.tools::%protected-file-edit-path-p ".gitignore")))
+  (is (not (cl-cc.tools::%protected-file-edit-path-p ".github/workflows/ci.yml")))
+  (is (not (cl-cc.tools::%protected-file-edit-path-p "docs/about.git.txt"))))
+
 (test file-edit-tool-edits-content-and-signals-stable-errors
   (let ((path (uiop:native-namestring
                (uiop:merge-pathnames* "file-edit-tool-test.txt"
@@ -180,6 +188,75 @@
                (is (search "未找到待替换内容" (cl-cc.lib:error-message condition))))))
       (when (probe-file path)
         (delete-file path)))))
+
+(test file-edit-tool-rejects-protected-metadata-paths-before-writing
+  (let* ((root-directory (uiop:merge-pathnames* "file-edit-protected/"
+                                               (uiop:temporary-directory)))
+         (protected-directory (uiop:ensure-directory-pathname
+                               (uiop:merge-pathnames* ".git/" root-directory)))
+         (protected-path (uiop:native-namestring
+                          (uiop:merge-pathnames* ".git/config" root-directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist protected-path)
+           (with-open-file (stream protected-path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before=1" stream))
+           (handler-case
+               (progn
+                 (cl-cc.tools:file-edit-tool (list :path protected-path :old-text "before" :new-text "after"))
+                 (fail "expected protected file-edit path to be rejected"))
+             (cl-cc.lib:cl-cc-error (condition)
+               (is (eq (cl-cc.lib:error-code condition) :file-edit-failed))
+               (is (search ".git" (cl-cc.lib:error-message condition)))
+               (is (string= (uiop:read-file-string protected-path) "before=1"))
+               (is (probe-file protected-directory)))))
+      (when (probe-file root-directory)
+        (uiop:delete-directory-tree root-directory :validate t :if-does-not-exist :ignore)))))
+
+(test file-edit-tool-preview-allows-protected-metadata-paths-without-writing
+  (let* ((root-directory (uiop:merge-pathnames* "file-edit-protected-preview/"
+                                               (uiop:temporary-directory)))
+         (protected-path (uiop:native-namestring
+                          (uiop:merge-pathnames* ".git/config" root-directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist protected-path)
+           (with-open-file (stream protected-path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "before=1" stream))
+           (let ((result (cl-cc.tools:file-edit-tool (list :path protected-path :old-text "before" :new-text "after" :preview t))))
+             (is (getf result :preview))
+             (is (null (getf result :write-applied)))
+             (is (search "预览编辑文件:" (getf result :summary)))
+             (is (string= (getf result :path) protected-path))
+             (is (string= (uiop:read-file-string protected-path) "before=1"))))
+      (when (probe-file root-directory)
+        (uiop:delete-directory-tree root-directory :validate t :if-does-not-exist :ignore)))))
+
+(test file-edit-tool-allows-dot-gitignore-and-dot-github-paths
+  (let* ((root-directory (uiop:merge-pathnames* "file-edit-safe-hidden/"
+                                               (uiop:temporary-directory)))
+         (gitignore-path (uiop:native-namestring
+                          (uiop:merge-pathnames* ".gitignore" root-directory)))
+         (workflow-path (uiop:native-namestring
+                         (uiop:merge-pathnames* ".github/workflows/ci.yml" root-directory))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist workflow-path)
+           (with-open-file (stream gitignore-path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "target" stream))
+           (with-open-file (stream workflow-path :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "target" stream))
+           (let ((gitignore-result (cl-cc.tools:file-edit-tool (list :path gitignore-path :old-text "target" :new-text "done")))
+                 (workflow-result (cl-cc.tools:file-edit-tool (list :path workflow-path :old-text "target" :new-text "done" :preview t))))
+             (is (string= (getf gitignore-result :summary)
+                          (format nil "编辑文件: ~A" gitignore-path)))
+             (is (getf gitignore-result :write-applied))
+             (is (string= (uiop:read-file-string gitignore-path) "done"))
+             (is (getf workflow-result :preview))
+             (is (null (getf workflow-result :write-applied)))
+             (is (string= (uiop:read-file-string workflow-path) "target"))))
+      (when (probe-file root-directory)
+        (uiop:delete-directory-tree root-directory :validate t :if-does-not-exist :ignore)))))
 
 (test file-edit-tool-preview-does-not-write-file
   (let ((path (uiop:native-namestring
