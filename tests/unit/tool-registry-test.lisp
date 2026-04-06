@@ -54,8 +54,10 @@
     (is (string= (cl-cc.models:tool-id definition) "grep-tool"))
     (is (string= (cl-cc.models:tool-summary definition) "在指定目录或单个文件内搜索文本，用于最小可用的代码检索"))
     (is (equal (cl-cc.models:tool-input-schema definition)
-               '(:text "search query or `query :: root`" :closed t
-                 :json ((:name "query" :summary "待搜索的文本关键词" :type :string)
+               '(:text "search query, `query-1 || query-2`, or `query :: root`" :closed t
+                 :json ((:name "query" :summary "待搜索的单个文本关键词" :type :string)
+                        (:name "queries" :summary "待搜索的多个文本关键词列表，任一命中即返回该行" :type :array :required nil :nullable t :collection t
+                         :fields ((:name "query" :summary "待搜索的文本关键词" :type :string)))
                         (:name "root" :summary "搜索根路径，缺省为当前工作目录" :type :string :required nil :nullable t)))))
     (is (equal (cl-cc.models:tool-output-schema definition)
                '(:text "matched lines" :closed t

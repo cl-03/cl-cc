@@ -7,13 +7,17 @@
 
 (test normalized-grep-input-supports-structured-and-natural-language-input
   (is (equal (cl-cc.tools::%normalized-grep-input '(:query "session-loop" :root "src"))
-             '(:query "session-loop" :root "src")))
+             '(:queries ("session-loop") :query "session-loop" :root "src")))
+  (is (equal (cl-cc.tools::%normalized-grep-input '(:queries ("session-loop" "permission") :root "src"))
+             '(:queries ("session-loop" "permission") :query "session-loop" :root "src")))
   (is (equal (cl-cc.tools::%normalized-grep-input "grep session-loop")
-             '(:query "session-loop" :root nil)))
+             '(:queries ("session-loop") :query "session-loop")))
+  (is (equal (cl-cc.tools::%normalized-grep-input "grep session-loop || permission :: src")
+             '(:queries ("session-loop" "permission") :query "session-loop" :root "src")))
   (is (equal (cl-cc.tools::%normalized-grep-input "search code for permission :: src")
-             '(:query "permission" :root "src")))
+             '(:queries ("permission") :query "permission" :root "src")))
   (is (equal (cl-cc.tools::%normalized-grep-input "fixture-input-grep file-write-tool")
-             '(:query "file-write-tool" :root nil)))
+             '(:queries ("file-write-tool") :query "file-write-tool")))
   (is (null (cl-cc.tools::%normalized-grep-input "   "))))
 
 (test grep-tool-signals-stable-error-for-invalid-input
@@ -74,8 +78,8 @@
            (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
              (write-string "needle again" stream))
            (let ((cl-cc.tools::*grep-command-runner*
-                   (lambda (query root max-results)
-                     (declare (ignore query root max-results))
+                   (lambda (queries root max-results)
+                     (declare (ignore queries root max-results))
                      (list :stdout (format nil "nested/result.txt:1:needle again~%root.lisp:2:needle here~%")
                            :stderr nil
                            :exit-code 0))))
@@ -108,14 +112,41 @@
            (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
              (write-string "needle again" stream))
            (let ((cl-cc.tools::*grep-command-runner*
-                   (lambda (query root max-results)
-                     (declare (ignore query root max-results))
+                   (lambda (queries root max-results)
+                     (declare (ignore queries root max-results))
                      nil)))
              (let ((result (cl-cc.tools:grep-tool
                             (list :query "needle"
                                   :root (uiop:native-namestring directory-path)))))
                (is (search "root.lisp:2:needle here" result))
                (is (search "nested/result.txt:1:needle again" result)))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file nested-file)
+        (delete-file nested-file))
+      (when (probe-file nested-directory)
+        (uiop:delete-directory-tree nested-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test grep-tool-supports-multiple-queries-with-or-semantics
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "grep-tool-multi-query-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "root.lisp" directory-path))
+         (nested-directory (merge-pathnames "nested/" directory-path))
+         (nested-file (merge-pathnames "nested/result.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist nested-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string (format nil "alpha~%needle here") stream))
+           (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "permission nested" stream))
+           (let ((result (cl-cc.tools:grep-tool (list :queries '("needle" "permission")
+                                                      :root (uiop:native-namestring directory-path)))))
+             (is (search "root.lisp:2:needle here" result))
+             (is (search "nested/result.txt:1:permission nested" result))))
       (when (probe-file root-file)
         (delete-file root-file))
       (when (probe-file nested-file)

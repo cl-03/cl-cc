@@ -629,9 +629,21 @@
                '("grep-tool" "file-read-tool" "echo-tool" "failing-tool")))
     (is (string= (getf first-step :tool) "grep-tool"))
     (is (equal (getf first-step :input)
-               '(:query "permission" :root "src")))
+               '(:queries ("permission") :query "permission" :root "src")))
     (is (equal (cdr (assoc "grep-tool" (getf plan :tool-inputs) :test #'string=))
-               '(:query "permission" :root "src")))))
+               '(:queries ("permission") :query "permission" :root "src")))))
+
+(test plan-session-execution-builds-multi-query-grep-specific-inputs
+  (let* ((plan (cl-cc.services:plan-session-execution "grep permission || audit :: src"))
+         (steps (getf plan :steps))
+         (first-step (first steps)))
+    (is (equal (getf plan :tool-ids)
+               '("grep-tool" "file-read-tool" "echo-tool" "failing-tool")))
+    (is (string= (getf first-step :tool) "grep-tool"))
+    (is (equal (getf first-step :input)
+               '(:queries ("permission" "audit") :query "permission" :root "src")))
+    (is (equal (cdr (assoc "grep-tool" (getf plan :tool-inputs) :test #'string=))
+               '(:queries ("permission" "audit") :query "permission" :root "src")))))
 
 (test plan-session-execution-honors-tool-overrides
   (let* ((plan (cl-cc.services:plan-session-execution "read file README.md"

@@ -116,9 +116,11 @@
 
 (define-tool "grep-tool" #'cl-cc.tools:grep-tool
   (:summary "在指定目录或单个文件内搜索文本，用于最小可用的代码检索")
-  (:input-schema `(:text "search query or `query :: root`"
+  (:input-schema `(:text "search query, `query-1 || query-2`, or `query :: root`"
                    :closed t
-                   :json (,(schema-field "query" "待搜索的文本关键词" :type :string)
+                   :json (,(schema-field "query" "待搜索的单个文本关键词" :type :string)
+                          ,(schema-field "queries" "待搜索的多个文本关键词列表，任一命中即返回该行" :type :array :required nil :nullable t :collection t
+                                         :fields (list (schema-field "query" "待搜索的文本关键词" :type :string)))
                           ,(schema-field "root" "搜索根路径，缺省为当前工作目录" :type :string :required nil :nullable t))))
   (:output-schema `(:text "matched lines"
                     :closed t

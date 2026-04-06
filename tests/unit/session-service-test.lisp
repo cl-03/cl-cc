@@ -461,13 +461,52 @@
                         '("grep-tool" "file-read-tool" "echo-tool" "failing-tool")))
              (is (equal (first (getf payload :execution-plan))
                         (list :tool "grep-tool"
-                              :input (list :query "permission"
+                  :input (list :queries '("permission")
+                       :query "permission"
                                            :root (uiop:native-namestring directory-path)))))
              (is (string= (getf tool-record :tool) "grep-tool"))
              (is (eq (getf tool-record :status) :success))
              (is (search "main.lisp:1:permission match" (getf payload :result)))
              (is (search "nested/notes.txt:1:permission nested" (getf payload :result)))
              (is (search "main.lisp:1:permission match" (getf (getf tool-record :output) :result)))))
+      (when (probe-file root-file)
+        (delete-file root-file))
+      (when (probe-file nested-file)
+        (delete-file nested-file))
+      (when (probe-file nested-directory)
+        (uiop:delete-directory-tree nested-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test run-session-result-can-search-code-via-multi-query-grep-tool
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "run-session-multi-grep-test/"
+                                                 (uiop:temporary-directory))))
+         (root-file (merge-pathnames "main.lisp" directory-path))
+         (nested-directory (merge-pathnames "nested/" directory-path))
+         (nested-file (merge-pathnames "nested/notes.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist nested-directory)
+           (with-open-file (stream root-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "permission match" stream))
+           (with-open-file (stream nested-file :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "audit nested" stream))
+           (let* ((input (format nil "grep permission || audit :: ~A" (uiop:native-namestring directory-path)))
+                  (result-object (cl-cc.services:run-session-result "multi-grep-session" :input input))
+                  (payload (cl-cc.lib:result-payload result-object))
+                  (tool-record (first (getf payload :tool-results))))
+             (is (eq (cl-cc.lib:result-status result-object) :success))
+             (is (equal (first (getf payload :execution-plan))
+                        (list :tool "grep-tool"
+                              :input (list :queries '("permission" "audit")
+                                           :query "permission"
+                                           :root (uiop:native-namestring directory-path)))))
+             (is (string= (getf tool-record :tool) "grep-tool"))
+             (is (eq (getf tool-record :status) :success))
+             (is (search "main.lisp:1:permission match" (getf payload :result)))
+             (is (search "nested/notes.txt:1:audit nested" (getf payload :result)))
+             (is (search "nested/notes.txt:1:audit nested" (getf (getf tool-record :output) :result)))))
       (when (probe-file root-file)
         (delete-file root-file))
       (when (probe-file nested-file)
