@@ -198,6 +198,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
       - `file-read-tool.error`: 文件读取失败摘要消息 [type: `string`]
       - `file-read-tool.code`: 稳定错误码 [type: `string`]
       - `directory-list-tool.result`: 目录列举结果内容 [type: `string`]
+      - `directory-list-tool.entries`: 按稳定排序返回的目录条目数组 [type: `array`]
       - `directory-list-tool.error`: 目录列举失败摘要消息 [type: `string`]
       - `directory-list-tool.code`: 稳定错误码 [type: `string`]
       - `grep-tool.result`: 搜索结果文本，每行一条匹配记录 [type: `string`]
@@ -499,6 +500,7 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
         - `file-read-tool.error`: 文件读取失败摘要消息 [type: `string`]
         - `file-read-tool.code`: 稳定错误码 [type: `string`]
         - `directory-list-tool.result`: 目录列举结果内容 [type: `string`]
+        - `directory-list-tool.entries`: 按稳定排序返回的目录条目数组 [type: `array`]
         - `directory-list-tool.error`: 目录列举失败摘要消息 [type: `string`]
         - `directory-list-tool.code`: 稳定错误码 [type: `string`]
         - `grep-tool.result`: 搜索结果文本，每行一条匹配记录 [type: `string`]
@@ -745,9 +747,10 @@ sbcl --noinform --non-interactive --load cl-cc.asd --eval "(asdf:test-system :cl
   - `recursive`: 是否递归列举子目录，缺省为 false [type: `boolean`] [optional] [nullable]
   - `depth`: 递归列举的最大深度，缺省为不限制 [type: `integer`] [min: `1`] [optional] [nullable]
   - `contains`: 仅返回路径中包含该子串的条目，缺省为不过滤 [type: `string`] [optional] [nullable]
-- Output Schema: `text`: directory entries; `json`: `result` [closed]
+- Output Schema: `text`: directory entries; `json`: `result`, `entries` [closed]
 - Output JSON Fields:
   - `result`: 目录列举结果内容 [type: `string`]
+  - `entries`: 按稳定排序返回的目录条目数组 [type: `array`]
 - Error Output Schema: `text`: directory listing failed output; `json`: `error`, `code` [closed]
 - Error JSON Fields:
   - `error`: 目录列举失败摘要消息 [type: `string`]

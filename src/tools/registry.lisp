@@ -511,7 +511,8 @@
                           ,(schema-field "contains" "仅返回路径中包含该子串的条目，缺省为不过滤" :type :string :required nil :nullable t))))
   (:output-schema `(:text "directory entries"
                     :closed t
-                    :json (,(schema-field "result" "目录列举结果内容" :source :raw-result :type :string))))
+            :json (,(schema-field "result" "目录列举结果内容" :source '(:raw-result-field :summary) :type :string)
+              ,(schema-field "entries" "按稳定排序返回的目录条目数组" :source '(:raw-result-field :entries) :type :array))))
   (:error-output-schema `(:text "directory listing failed output"
                           :closed t
                           :json (,(schema-field "error" "目录列举失败摘要消息" :source :error-message :type :string)

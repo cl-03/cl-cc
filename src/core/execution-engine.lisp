@@ -71,19 +71,33 @@
                                   :raw-result raw-result
                                   :condition condition))))
 
+(defun %directory-list-result-entries (summary)
+  (cond
+    ((or (null summary)
+         (string= summary "")
+         (string= summary "(empty directory)")
+         (string= summary "(no matching entries)"))
+     nil)
+    (t
+     (uiop:split-string summary :separator '(#\Newline)))))
+
 (defun %normalized-tool-success-raw-result (tool-id raw-result)
-  (if (and (string= tool-id "shell-tool")
-           (listp raw-result))
-      (append raw-result
-              (unless (member :background raw-result)
-                (list :background nil))
-              (unless (member :background-task-id raw-result)
-                (list :background-task-id nil))
-              (unless (member :output-path raw-result)
-                (list :output-path nil))
-              (unless (member :process-id raw-result)
-                (list :process-id nil)))
-      raw-result))
+  (cond
+    ((string= tool-id "directory-list-tool")
+     (list :summary raw-result
+           :entries (%directory-list-result-entries raw-result)))
+    ((and (string= tool-id "shell-tool")
+          (listp raw-result))
+     (append raw-result
+             (unless (member :background raw-result)
+               (list :background nil))
+             (unless (member :background-task-id raw-result)
+               (list :background-task-id nil))
+             (unless (member :output-path raw-result)
+               (list :output-path nil))
+             (unless (member :process-id raw-result)
+               (list :process-id nil))))
+    (t raw-result)))
 
 (defun %tool-success-output (tool-id raw-result)
   (%tool-schema-output tool-id

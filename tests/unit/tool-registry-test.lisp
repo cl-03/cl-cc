@@ -360,7 +360,9 @@
                         (:name "depth" :summary "递归列举的最大深度，缺省为不限制" :type :integer :required nil :nullable t :minimum 1)
                         (:name "contains" :summary "仅返回路径中包含该子串的条目，缺省为不过滤" :type :string :required nil :nullable t)))))
     (is (equal (cl-cc.models:tool-output-schema definition)
-               '(:text "directory entries" :closed t :json ((:name "result" :summary "目录列举结果内容" :source :raw-result :type :string)))))
+               '(:text "directory entries" :closed t
+                 :json ((:name "result" :summary "目录列举结果内容" :source (:raw-result-field :summary) :type :string)
+                        (:name "entries" :summary "按稳定排序返回的目录条目数组" :source (:raw-result-field :entries) :type :array)))))
     (is (equal (cl-cc.models:tool-error-output-schema definition)
                '(:text "directory listing failed output" :closed t
                  :json ((:name "error" :summary "目录列举失败摘要消息" :source :error-message :type :string)

@@ -314,7 +314,7 @@
              (is (search "\"executionStatus\":\"success\"" output))
              (is (search "\"result\":\"tool:directory-list-tool result:a.txt\\nb.txt\"" output))
              (is (search "\"toolResults\":[{\"toolId\":\"directory-list-tool\"" output))
-             (is (search "\"output\":{\"result\":\"a.txt\\nb.txt\"}" output))))
+             (is (search "\"output\":{\"result\":\"a.txt\\nb.txt\",\"entries\":[\"a.txt\",\"b.txt\"]}" output))))
       (when (probe-file file-a)
         (delete-file file-a))
       (when (probe-file file-b)
@@ -344,13 +344,48 @@
              (is (search "\"executionStatus\":\"success\"" output))
              (is (search "\"result\":\"tool:directory-list-tool result:a.txt\\nchild/\\nchild/note.txt\"" output))
              (is (search "\"toolResults\":[{\"toolId\":\"directory-list-tool\"" output))
-             (is (search "\"output\":{\"result\":\"a.txt\\nchild/\\nchild/note.txt\"}" output))))
+             (is (search "\"output\":{\"result\":\"a.txt\\nchild/\\nchild/note.txt\",\"entries\":[\"a.txt\",\"child/\",\"child/note.txt\"]}" output))))
       (when (probe-file root-file)
         (delete-file root-file))
       (when (probe-file child-file)
         (delete-file child-file))
       (when (probe-file child-directory)
         (uiop:delete-directory-tree child-directory :validate t :if-does-not-exist :ignore))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test session-run-json-output-renders-empty-directory-list-entries-as-empty-array
+  (let ((directory-path (uiop:ensure-directory-pathname
+                         (uiop:merge-pathnames* "session-run-json-directory-list-empty/"
+                                                (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory-path)
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                               (format nil "list directory ~A" (uiop:native-namestring directory-path))
+                                                                               "json")))))
+             (is (search "\"result\":\"tool:directory-list-tool result:(empty directory)\"" output))
+             (is (search "\"output\":{\"result\":\"(empty directory)\",\"entries\":[]}" output))))
+      (when (probe-file directory-path)
+        (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
+
+(test session-run-json-output-renders-no-match-directory-list-entries-as-empty-array
+  (let* ((directory-path (uiop:ensure-directory-pathname
+                          (uiop:merge-pathnames* "session-run-json-directory-list-no-match/"
+                                                 (uiop:temporary-directory))))
+         (file-a (merge-pathnames "alpha.txt" directory-path)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist directory-path)
+           (with-open-file (stream file-a :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "alpha" stream))
+           (let ((output (capture-output (lambda () (cl-cc::handle-session-run "resume-user"
+                                                                               (format nil "list directory ~A :: contains=missing" (uiop:native-namestring directory-path))
+                                                                               "json")))))
+             (is (search "\"result\":\"tool:directory-list-tool result:(no matching entries)\"" output))
+             (is (search "\"output\":{\"result\":\"(no matching entries)\",\"entries\":[]}" output))))
+      (when (probe-file file-a)
+        (delete-file file-a))
       (when (probe-file directory-path)
         (uiop:delete-directory-tree directory-path :validate t :if-does-not-exist :ignore)))))
 

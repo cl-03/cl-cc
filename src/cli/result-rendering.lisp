@@ -113,6 +113,42 @@
         collect (%cli-json-field (%cli-json-escape-string (%cli-plist-key-name key))
                                  (%cli-json-plist-field-value key value))))
 
+(defun %cli-schema-field-keyword (field)
+  (intern (with-output-to-string (stream)
+            (loop for character across (cl-cc::%output-schema-json-field-name field)
+                  for first-character = t then nil do
+              (when (and (upper-case-p character)
+                         (not first-character))
+                (write-char #\- stream))
+              (write-char (char-upcase character) stream)))
+          :keyword))
+
+(defun %cli-schema-field-array-default-empty-p (field)
+  (and (eq (getf field :type) :array)
+       (not (getf field :nullable))))
+
+(defun %cli-tool-output-schema-json-fields (schema output)
+  (loop for field in (getf schema :json)
+        for field-name = (cl-cc::%output-schema-json-field-name field)
+        for field-key = (%cli-schema-field-keyword field)
+        for field-value = (getf output field-key)
+        collect (%cli-json-field
+                 (%cli-json-escape-string field-name)
+                 (if (and (null field-value)
+                          (%cli-schema-field-array-default-empty-p field))
+                     (%cli-render-json-array '())
+                     (%cli-json-plist-field-value field-key field-value)))))
+
+(defun %cli-tool-output-json-value (tool-id output status)
+  (let* ((definition (and tool-id (cl-cc.tools:find-tool-definition tool-id)))
+         (schema (and definition
+                      (if (eq status :success)
+                          (cl-cc.models:tool-output-schema definition)
+                          (cl-cc.models:tool-error-output-schema definition)))))
+    (if (and schema (listp output))
+        (%cli-render-json-object (%cli-tool-output-schema-json-fields schema output))
+        (%cli-json-value output))))
+
 (defun %cli-json-value (value)
   (cond
     ((null value) (%cli-json-null))
@@ -173,7 +209,9 @@
      (list "durationSeconds"
        (%cli-json-number (getf record :duration-seconds 0d0)))
      (list "output"
-       (%cli-json-value (getf record :output)))
+       (%cli-tool-output-json-value (getf record :tool)
+                                    (getf record :output)
+                                    (getf record :status)))
      (list "error"
        (%cli-json-string-or-null (getf record :error)))
      (list "errorCode"
