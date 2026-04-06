@@ -264,23 +264,51 @@
         (error (%directory-list-tool-error (format nil "无法列举目录: ~A" path)))))))
 
 ;;; 新增：返回 entries (list of plist)，每项含 :name :type
+
 (defun %directory-list-entries (path &key recursive depth contains)
-  (labels ((collect-entries (directory prefix level)
-             (let* ((files (sort (copy-list (uiop:directory-files directory)) #'%directory-entry<))
-                    (directories (sort (copy-list (uiop:subdirectories directory)) #'%directory-entry<)))
-               (append (loop for file in files
-                             collect (list :name (format nil "~A~A" prefix (%directory-entry-name file))
-                                           :type ":file"))
-                       (loop for subdirectory in directories
-                             for directory-name = (%directory-entry-name subdirectory)
-                             for display-name = (format nil "~A~A" prefix directory-name)
-                             append (append (list (list :name display-name :type ":dir"))
-                                            (when (and recursive
-                                                       (or (null depth)
-                                                           (< level depth)))
-                                              (collect-entries subdirectory display-name (1+ level))))))))
-           (sorted-entries (entries)
-             (sort (copy-list entries) (lambda (a b) (string-lessp (getf a :name) (getf b :name))))))
+  (labels
+      ((entry-type (pathname)
+         (cond
+           ((uiop:directory-pathname-p pathname) ":dir")
+           ((probe-file pathname)
+            (let ((truename (ignore-errors (truename pathname))))
+              (cond
+                ((and truename (uiop:directory-pathname-p truename)) ":dir")
+                ((and truename (not (equal pathname truename))) ":symlink")
+                ((and (stringp (file-namestring pathname))
+                      (char= (char (file-namestring pathname) 0) #\.)) ":hidden")
+                ((ignore-errors (uiop:file-exists-p pathname)) ":file")
+                (t ":special"))))
+           (t ":special")))
+       (entry-size (pathname)
+         (ignore-errors (let ((s (uiop:file-length pathname))) (and s (truncate s)))))
+       (entry-mtime (pathname)
+         (ignore-errors (let ((t (file-write-date pathname)))
+                          (when t (multiple-value-bind (sec min hour day mon yr dow)
+                                        (decode-universal-time t)
+                                      (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D:~2,'0D" yr mon day hour min sec))))))
+       (collect-entries (directory prefix level)
+         (let* ((files (sort (copy-list (uiop:directory-files directory)) #'%directory-entry<))
+                (directories (sort (copy-list (uiop:subdirectories directory)) #'%directory-entry<)))
+           (append
+            (loop for file in files
+                  for name = (format nil "~A~A" prefix (%directory-entry-name file))
+                  for type = (entry-type file)
+                  collect (append (list :name name :type type)
+                                  (when (string= type ":file") (list :size (entry-size file)))
+                                  (list :mtime (entry-mtime file))))
+            (loop for subdirectory in directories
+                  for directory-name = (%directory-entry-name subdirectory)
+                  for display-name = (format nil "~A~A" prefix directory-name)
+                  for type = (entry-type subdirectory)
+                  collect (append (list :name display-name :type type)
+                                  (list :mtime (entry-mtime subdirectory)))
+                  append (when (and recursive
+                                    (or (null depth)
+                                        (< level depth)))
+                          (collect-entries subdirectory display-name (1+ level)))))))
+       (sorted-entries (entries)
+         (sort (copy-list entries) (lambda (a b) (string-lessp (getf a :name) (getf b :name))))))
     (let* ((entries (if recursive
                         (sorted-entries (collect-entries path "" 1))
                         (sorted-entries (collect-entries path "" 0))))

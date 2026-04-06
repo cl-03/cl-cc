@@ -1,3 +1,79 @@
+(test directory-list-tool-entries-extreme-and-abnormal-cases
+  (let* ((tmp-root (uiop:ensure-directory-pathname
+                    (uiop:merge-pathnames* "directory-list-tool-extreme-test/"
+                                           (uiop:temporary-directory))))
+         (file-a (merge-pathnames "a.txt" tmp-root))
+         (dir-b (merge-pathnames "b/" tmp-root))
+         (deep-dir (merge-pathnames "b/c/d/e/" tmp-root)))
+    (unwind-protect
+         (progn
+           ;; 空目录
+           (ensure-directories-exist tmp-root)
+           (let* ((result (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring tmp-root))))
+                  (parsed (ignore-errors (jsown:parse result)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (listp entries))
+             (is (null entries)))
+
+           ;; 仅有文件
+           (with-open-file (stream file-a :direction :output :if-exists :supersede :if-does-not-exist :create)
+             (write-string "a" stream))
+           (let* ((result (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring tmp-root))))
+                  (parsed (ignore-errors (jsown:parse result)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (= (length entries) 1))
+             (is (string= (jsown:val (first entries) "type") ":file")))
+
+           ;; 仅有目录
+           (ensure-directories-exist dir-b)
+           (delete-file file-a)
+           (let* ((result (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring tmp-root))))
+                  (parsed (ignore-errors (jsown:parse result)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (= (length entries) 1))
+             (is (string= (jsown:val (first entries) "type") ":dir")))
+
+           ;; 深层嵌套
+           (ensure-directories-exist deep-dir)
+           (let* ((result (cl-cc.tools:directory-list-tool (list :path (uiop:native-namestring tmp-root) :recursive t)))
+                  (parsed (ignore-errors (jsown:parse result)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (find ":dir" (mapcar (lambda (e) (jsown:val e "type")) entries) :test #'string=)))
+
+           ;; type 字段缺失/非法值
+           (let* ((bad-json (jsown:to-json (jsown:new-js "result" "bad" "entries" (list (jsown:new-js "name" "foo")))))
+                  (parsed (ignore-errors (jsown:parse bad-json)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (listp entries))
+             (dolist (entry entries)
+               (is (not (jsown:keyp entry "type")))))
+           (let* ((bad-json2 (jsown:to-json (jsown:new-js "result" "bad" "entries" (list (jsown:new-js "name" "foo" "type" 123)))))
+                  (parsed (ignore-errors (jsown:parse bad-json2)))
+                  (entries (and parsed (jsown:val parsed "entries"))))
+             (is (listp entries))
+             (is (numberp (jsown:val (first entries) "type"))))
+
+           ;; entries 字段缺失/非 list
+           (let* ((bad-json3 (jsown:to-json (jsown:new-js "result" "bad")))
+                  (parsed (ignore-errors (jsown:parse bad-json3))))
+             (is (not (jsown:keyp parsed "entries"))))
+           (let* ((bad-json4 (jsown:to-json (jsown:new-js "result" "bad" "entries" 42)))
+                  (parsed (ignore-errors (jsown:parse bad-json4))))
+             (is (numberp (jsown:val parsed "entries"))))
+
+           ;; 非法输入类型
+           (is (null (cl-cc.tools:directory-list-tool 123)))
+           (is (null (cl-cc.tools:directory-list-tool nil)))
+           (is (null (cl-cc.tools:directory-list-tool '(:foo "bar"))))
+           )
+      (when (probe-file file-a)
+        (delete-file file-a))
+      (when (probe-file deep-dir)
+        (uiop:delete-directory-tree deep-dir :validate t :if-does-not-exist :ignore))
+      (when (probe-file dir-b)
+        (uiop:delete-directory-tree dir-b :validate t :if-does-not-exist :ignore))
+      (when (probe-file tmp-root)
+        (uiop:delete-directory-tree tmp-root :validate t :if-does-not-exist :ignore)))))
 ;;;; tests/unit/directory-list-tool-test.lisp - directory-list-tool 单元测试
 (in-package :cl-cc/tests)
 

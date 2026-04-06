@@ -513,10 +513,12 @@
   (:output-schema `(:text "directory entries"
                     :closed t
             :json (,(schema-field "result" "目录列举结果内容" :source '(:raw-result-field :summary) :type :string)
-              ,(schema-field "entries" "按稳定排序返回的目录条目数组，每项含 name 与 type 字段，type 为 :file 或 :dir" :source '(:raw-result-field :entries) :type :array :closed t :collection t
+              ,(schema-field "entries" "按稳定排序返回的目录条目数组，每项含 name 与 type 字段，type 支持 :file/:dir/:symlink/:hidden/:special，预留扩展。可选 size/mtime。" :source '(:raw-result-field :entries) :type :array :closed t :collection t
                  :fields (list
                    (schema-field "name" "条目名称（文件或目录名，带相对路径）" :type :string)
-                   (schema-field "type" "条目类型，:file 或 :dir" :type :string :enum '(":file" ":dir"))
+                   (schema-field "type" "条目类型，:file/:dir/:symlink/:hidden/:special" :type :string :enum '(":file" ":dir" ":symlink" ":hidden" ":special"))
+                   (schema-field "size" "文件大小（字节），仅文件时可用" :type :integer :required nil :nullable t)
+                   (schema-field "mtime" "最后修改时间，ISO-8601 字符串" :type :string :required nil :nullable t)
                  )))))
   (:error-output-schema `(:text "directory listing failed output"
                           :closed t
