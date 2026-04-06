@@ -17,10 +17,6 @@
   '("append file " "append to file " "追加写入文件" "追加文件")
   "允许 file-write-tool 以追加模式消费的自然语言前缀。")
 
-(defparameter +protected-file-write-directories+
-  '(".git")
-  "禁止 file-write-tool 写入的受保护目录段。")
-
 (defun %split-once (text delimiter)
   (let ((position (search delimiter text :test #'char-equal)))
     (when position
@@ -84,12 +80,7 @@
       (format nil "写入文件: ~A" path)))
 
 (defun %protected-file-write-path-p (path)
-  (let ((components (cl-ppcre:split "[/\\\\]+" (or path ""))))
-    (loop for component in components
-          thereis (and (> (length component) 0)
-                       (not (string= component "."))
-                       (member component +protected-file-write-directories+
-                               :test #'string-equal)))))
+  (%protected-repository-metadata-path-p path))
 
 (defun file-write-tool (input)
   "写入指定文件并返回稳定摘要。"
